@@ -43,6 +43,9 @@ bool fill_pcm(void* buffer, SampleFmt fmt, int32_t channels, int32_t sample_rate
 void set_decision(Decision d);
 Decision get_decision();
 
+/** Independent capture heartbeat, including REAL_MIC. No JNI/Binder on the audio thread. */
+void note_capture(CapturePath path);
+
 /**
  * 设置当前可读取的 PCM pipe fd（由 Kotlin 通过 ContentResolver 打开后传下来）。
  * 传 -1 表示当前没有可用 fd。设置新 fd 会自动 close 旧 fd。
@@ -57,6 +60,7 @@ void drain_stats(uint64_t* out_reads, uint64_t* out_bytes,
                  int32_t* out_last_sr, int32_t* out_last_ch,
                  uint64_t* out_underruns, uint64_t* out_missing_frames,
                  uint64_t* out_requested_frames, int32_t* out_path,
-                 uint64_t* out_skipped_source_frames = nullptr);
+                 uint64_t* out_skipped_source_frames = nullptr,
+                 uint64_t* out_capture_reads = nullptr);
 
 } // namespace glass

@@ -42,11 +42,11 @@ class RuntimeProvider : ContentProvider() {
         selectionArgs: Array<out String>?, sortOrder: String?
     ): Cursor {
         val pkg = selectionArgs?.firstOrNull() ?: ""
-        // 「模块已激活」诊断状态：注入侧不再在每个 App 启动时单独 ping，改由这里在真正被查询
-        // （= 服务运行且目标 App 正在录音）时顺手更新。节流写入，避免高频录音把 prefs 写爆。
-        recordPing(pkg, selectionArgs?.getOrNull(1)?.toIntOrNull() ?: 0)
         val resolver = entryPoint().resolver()
         val src = resolver.resolve(pkg)
+        // 查询只证明模块可以通信；空闲 native poller 也会查询，不能视为成功替换。
+        recordPackageState(pkg, "last_query_ms", System.currentTimeMillis(), src.name)
+        recordPing(pkg, selectionArgs?.getOrNull(1)?.toIntOrNull() ?: 0)
         val snap = resolver.configSnapshot()
         return MatrixCursor(arrayOf("source", "group_id", "audio_id", "global_switch"))
             .apply { addRow(arrayOf(src.name, "", "", if (snap.globalSwitch) 1 else 0)) }
@@ -61,6 +61,12 @@ class RuntimeProvider : ContentProvider() {
                 val event = extras.getString("event").orEmpty().take(64)
                 if (event.isBlank()) return null
                 val pkg = extras.getString("package") ?: callingPackage ?: arg ?: "unknown"
+                if (event == "native_hooks_installed") recordPackageState(pkg, "native_hook_installed_ms", now)
+                if (event == "native_capture_active") recordPackageState(pkg, "last_capture_ms", now)
+                if (event == "provider_access_recovered") {
+                    recordPackageState(pkg, "provider_recovered_ms", now,
+                        "${extras.getString("path")}: ${extras.getString("reason")}")
+                }
 
                 synchronized(statsLock) {
                     val timeline = runCatching {
@@ -150,6 +156,7 @@ class RuntimeProvider : ContentProvider() {
                 val sampleRate = extras?.getInt("sample_rate") ?: 0
                 val channels = extras?.getInt("channels") ?: 0
                 val prefs = context?.getSharedPreferences(Constants.AUDIO_STATS_PREFS, Context.MODE_PRIVATE)
+                if (deltaReads > 0) recordPackageState(pkg, "last_intercept_ms", now)
                 // Binder 可并发上报；累计计数与 native 快照必须一起更新。
                 synchronized(statsLock) {
                     val oldReads = prefs?.getLong(Constants.AUDIO_STATS_TOTAL_READS, 0L) ?: 0L
@@ -199,7 +206,36 @@ class RuntimeProvider : ContentProvider() {
         return super.call(method, arg, extras)
     }
 
-    /** 节流更新 XPOSED_STATUS：与旧 xposed_ping 写入同一份 prefs，HookStatusRepository 无需改动。 */
+    /** 按包保留查询、安装、录音活动与实际替换证据，字段分别更新，不推导不存在的阶段。 */
+    private fun recordPackageState(pkg: String, field: String, now: Long, detail: String? = null) {
+        if (pkg.isBlank()) return
+        synchronized(statsLock) {
+            val key = pkg to field
+            val previous = lastPackageWrites[key]
+            if (previous != null && now - previous.first < PING_WRITE_THROTTLE_MS && previous.second == detail) return
+            runCatching {
+                val prefs = context?.getSharedPreferences(Constants.XPOSED_STATUS_PREFS, Context.MODE_PRIVATE) ?: return
+                val states = JSONObject(prefs.getString(Constants.XPOSED_STATUS_PACKAGES, "{}") ?: "{}")
+                val state = states.optJSONObject(pkg) ?: JSONObject()
+                state.put(field, now)
+                if (detail != null) state.put("${field}_detail", detail.take(160))
+                state.put("updated_at", now)
+                states.put(pkg, state)
+                if (states.length() > 64) {
+                    val oldest = states.keys().asSequence().minByOrNull {
+                        states.optJSONObject(it)?.optLong("updated_at") ?: 0L
+                    }
+                    if (oldest != null) states.remove(oldest)
+                }
+                prefs.edit().putString(Constants.XPOSED_STATUS_PACKAGES, states.toString()).apply()
+                lastPackageWrites.remove(key)
+                lastPackageWrites[key] = now to detail
+                if (lastPackageWrites.size > 256) lastPackageWrites.remove(lastPackageWrites.keys.first())
+            }
+        }
+    }
+
+    /** 全局通信心跳只用于说明 Provider 可达，不表示当前 App 正在录音。 */
     private fun recordPing(pkg: String, api: Int) {
         val now = System.currentTimeMillis()
         if (now - lastPingWrite < PING_WRITE_THROTTLE_MS) return
@@ -229,6 +265,7 @@ class RuntimeProvider : ContentProvider() {
 
     private companion object {
         private val statsLock = Any()
+        private val lastPackageWrites = LinkedHashMap<Pair<String, String>, Pair<Long, String?>>()
         @Volatile private var lastPingWrite = 0L
         private const val PING_WRITE_THROTTLE_MS = 3000L
         private const val DIAG_TIMELINE_LIMIT = 160

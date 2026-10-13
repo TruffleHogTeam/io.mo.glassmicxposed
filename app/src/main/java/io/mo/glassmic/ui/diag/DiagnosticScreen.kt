@@ -117,9 +117,9 @@ fun DiagnosticScreen(
                 DiagSection(stringResource(R.string.diag_section_health)) {
                     // LSPosed 注入
                     val hookActivityText = when (state.hook.activity) {
-                        HookActivity.ACTIVE -> "活跃 (API ${state.hook.api})"
-                        HookActivity.STALE -> "已加载 (无近期事件)"
-                        HookActivity.NEVER_PINGED -> "未检测到注入"
+                        HookActivity.ACTIVE -> stringResource(R.string.diag_hook_communication_active, state.hook.api)
+                        HookActivity.STALE -> stringResource(R.string.diag_hook_communication_stale)
+                        HookActivity.NEVER_PINGED -> stringResource(R.string.diag_hook_communication_none)
                     }
                     val hookColor = when (state.hook.activity) {
                         HookActivity.ACTIVE -> t.ok
@@ -131,7 +131,10 @@ fun DiagnosticScreen(
                         value = hookActivityText,
                         valueColor = hookColor,
                         statusDotColor = hookColor,
-                        subtitle = if (state.hook.lastPingMs > 0) "最后心跳: ${formatTimestamp(state.hook.lastPingMs)}" else "请确认已在 LSPosed 启用并勾选「系统框架」与目标"
+                        subtitle = if (state.hook.lastPingMs > 0) stringResource(
+                            R.string.diag_hook_communication_hint, state.hook.lastPackage ?: "—",
+                            formatTimestamp(state.hook.lastPingMs)
+                        ) else stringResource(R.string.diag_hook_communication_setup)
                     )
 
                     // 前台服务与运行态
@@ -303,7 +306,9 @@ fun DiagnosticScreen(
                     DiagRow(
                         label = stringResource(R.string.settings_intercept_last_pkg),
                         value = state.stats.lastPackage ?: "—",
-                        subtitle = if (state.stats.lastInterceptMs > 0) "最近调用: ${formatTimestamp(state.stats.lastInterceptMs)}" else "暂无 App 触发录音"
+                        subtitle = if (state.stats.lastInterceptMs > 0) stringResource(
+                            R.string.diag_last_replacement, formatTimestamp(state.stats.lastInterceptMs)
+                        ) else stringResource(R.string.diag_no_replacement)
                     )
                     if (state.stats.lastSampleRate > 0) {
                         DiagRow(
@@ -578,14 +583,16 @@ private fun DecisionItemRow(record: DecisionRecord) {
                 }
             }
             Text(
-                record.reasonDescription,
+                if (record.occurrences > 1L) stringResource(
+                    R.string.diag_decision_repeated, record.reasonDescription, record.occurrences
+                ) else record.reasonDescription,
                 style = TextStyle(fontSize = 12.sp),
                 color = t.ink3,
                 modifier = Modifier.padding(top = 2.dp)
             )
         }
         Text(
-            formatTimeOnly(record.timestamp),
+            formatTimeOnly(record.lastSeen),
             style = TextStyle(fontSize = 11.sp),
             fontFamily = FontFamily.Monospace,
             color = t.ink3

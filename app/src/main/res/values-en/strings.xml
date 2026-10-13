@@ -234,7 +234,15 @@
     <string name="diag_device_visibility">Strict ROM Compatibility</string>
 
     <string name="diag_section_health">Full-Chain Health Check</string>
-    <string name="diag_health_lsposed">LSPosed Injection Status</string>
+    <string name="diag_health_lsposed">LSPosed Communication</string>
+    <string name="diag_hook_communication_active">Recently reachable (API %1$d)</string>
+    <string name="diag_hook_communication_stale">Previously reached, no recent heartbeat</string>
+    <string name="diag_hook_communication_none">No communication heartbeat</string>
+    <string name="diag_hook_communication_hint">From %1$s · %2$s. A heartbeat does not prove audio replacement in the target app.</string>
+    <string name="diag_hook_communication_setup">Enable the module and select System Framework and the target in LSPosed. Hiding rules may also block communication.</string>
+    <string name="diag_last_replacement">Last replacement: %1$s</string>
+    <string name="diag_no_replacement">No audio replacement recorded</string>
+    <string name="diag_decision_repeated">%1$s (%2$d queries)</string>
     <string name="diag_health_service">Foreground Service &amp; Runtime</string>
     <string name="diag_health_scope">Scope &amp; Rule Configuration</string>
     <string name="diag_health_source">Current Audio Source</string>
@@ -261,7 +269,7 @@
     <string name="diag_probe_hint">Pulls audio directly from the local PCM pipeline and plays it back to verify whether decoding and streaming pipelines work properly.</string>
     <string name="diag_section_decisions">Recent Decision Trace</string>
     <string name="diag_decisions_empty">No intercept requests recorded yet (logged when target apps attempt to record audio)</string>
-    <string name="diag_decisions_hint">Shows decisions and rationale when target apps trigger recording hooks (pass / intercept).</string>
+    <string name="diag_decisions_hint">Keeps per-package decision changes and merges repeated queries. Decisions may come from recording or background queries; check interception statistics for actual replacement.</string>
     <string name="diag_section_logs">Log Management &amp; Diagnostics</string>
     <string name="diag_exporting">Packaging diagnostic bundle…</string>
 

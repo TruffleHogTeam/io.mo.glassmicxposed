@@ -42,6 +42,7 @@ object NativeAAudioHook {
     @Volatile private var pushedFdSr: Int = 0
     @Volatile private var pushedFdCh: Int = 0
     @Volatile private var hasPushedFd: Boolean = false
+    private var pcmRetryAtMs = 0L
 
     // 调试抓取：GlassMic 仅在日志级别为 DEBUG 时接受 /tap，其余情况按退避间隔重试。
     @Volatile private var hasTapFd: Boolean = false
@@ -108,9 +109,11 @@ object NativeAAudioHook {
 
             while (true) {
                 try {
-                    // 4.1 先同步决策。FILE 模式即使尚未打开 pipe，真实回调仍会进入 native 并计数，
-                    // 下一轮即可据此确认该进程真的在录音。
-                    val src = XBridge.resolveSource(ctx, callerPackage)
+                    // 心跳包含 REAL_MIC，空闲时减少 IPC，开始录音后下一轮立即刷新决策。
+                    // 保留 80ms 的本地原子统计采样，避免长时间休眠延迟录音起始响应。
+                    val stats = nativeDrainStats()
+                    val captureReads = stats?.getOrNull(9) ?: 0L
+                    val src = XBridge.resolveSource(ctx, callerPackage, captureObserved = captureReads > 0L)
                     val decisionCode = when (src) {
                         SourceType.REAL_MIC -> 0
                         SourceType.FILE, SourceType.TTS -> 1
@@ -130,13 +133,12 @@ object NativeAAudioHook {
                         lastSource = src
                     }
 
-                    // 4.2 拉取统计，同时把 reads 当作录音活动心跳。
-                    val stats = nativeDrainStats()
+                    // 替换次数与录音活动分开，真麦采集不能计为成功替换。
                     val now = SystemClock.uptimeMillis()
                     val reads = stats?.getOrNull(0)?.toInt() ?: 0
                     val inactiveBeforeRead = lastNativeCaptureAtMs == 0L ||
                         now - lastNativeCaptureAtMs > PCM_OPEN_ACTIVITY_WINDOW_MS
-                    if (reads > 0) {
+                    if (captureReads > 0L) {
                         lastNativeCaptureAtMs = now
                     }
                     val captureAgeMs = if (lastNativeCaptureAtMs > 0L) {
@@ -147,13 +149,13 @@ object NativeAAudioHook {
                     val pathCode = stats?.getOrNull(7)?.toInt() ?: 0
                     val pathName = pathName(pathCode)
 
-                    if (reads > 0 && inactiveBeforeRead) {
+                    if (captureReads > 0L && inactiveBeforeRead) {
                         XBridge.reportDiagnosticEvent(
                             ctx,
                             callerPackage,
                             "native_capture_active",
                             Bundle().apply {
-                                putLong("reads", reads.toLong())
+                                putLong("reads", captureReads)
                                 putLong("capture_age_ms", 0L)
                                 putString("path", pathName)
                                 putLong("sample_rate", stats?.getOrNull(2) ?: 0L)
@@ -257,13 +259,18 @@ object NativeAAudioHook {
         val wantSr = 48_000
         val wantCh = 1
         if (hasPushedFd && pushedFdSr == wantSr && pushedFdCh == wantCh) return
+        val now = SystemClock.uptimeMillis()
+        if (now < pcmRetryAtMs) return
+        pcmRetryAtMs = now + 2_000L
 
         val uri = Uri.parse("content://${Constants.PROVIDER_PCM}/stream?sr=$wantSr&ch=$wantCh")
+        var openFailure = "NO_FILE_DESCRIPTOR"
         val pfd = runCatching {
             ctx.contentResolver.openFileDescriptor(uri, "r")
         }.onFailure {
-            android.util.Log.w(TAG, "open pcm pipe failed: ${it.message}")
+            openFailure = it.javaClass.simpleName
         }.getOrNull() ?: run {
+            XBridge.reportProviderFailure(callerPackage, "pcm.open", openFailure)
             XBridge.reportDiagnosticEvent(
                 ctx,
                 callerPackage,
@@ -276,6 +283,7 @@ object NativeAAudioHook {
 
         val fd = takeFd(pfd)
         if (fd < 0) {
+            XBridge.reportProviderFailure(callerPackage, "pcm.detach", "INVALID_FD")
             XBridge.reportDiagnosticEvent(
                 ctx,
                 callerPackage,
@@ -287,6 +295,9 @@ object NativeAAudioHook {
         }
 
         nativeSetPcmFd(fd, wantSr, wantCh)
+        pcmRetryAtMs = 0L
+        XBridge.flushProviderFailures(ctx, callerPackage, "pcm.open")
+        XBridge.flushProviderFailures(ctx, callerPackage, "pcm.detach")
         hasPushedFd = true
         pushedFdSr = wantSr
         pushedFdCh = wantCh

@@ -39,6 +39,7 @@ static uint64_t g_pcm_generation = 0;
 static std::atomic<bool> g_worker_running{false};
 
 static std::atomic<uint64_t> g_pending_reads{0};
+static std::atomic<uint64_t> g_pending_capture_reads{0};
 static std::atomic<uint64_t> g_pending_bytes{0};
 static std::atomic<int32_t> g_last_sr{0};
 static std::atomic<int32_t> g_last_ch{0};
@@ -355,6 +356,7 @@ static FillResult fill_pcm_impl(
 ) {
     if (!buffer || numFrames <= 0 || dst_channels <= 0) return FillResult::PASS;
 
+    note_capture(path);
     Decision decision = static_cast<Decision>(g_decision.load(std::memory_order_relaxed));
     if (decision == Decision::REAL_MIC) return FillResult::PASS;
 
@@ -593,6 +595,11 @@ Decision get_decision() {
     return static_cast<Decision>(g_decision.load(std::memory_order_relaxed));
 }
 
+void note_capture(CapturePath path) {
+    g_last_path.store(static_cast<int32_t>(path), std::memory_order_relaxed);
+    g_pending_capture_reads.fetch_add(1, std::memory_order_relaxed);
+}
+
 void set_pcm_fd(int fd, int32_t sample_rate, int32_t channels) {
     if (fd >= 0) {
         const int flags = fcntl(fd, F_GETFL);
@@ -640,7 +647,8 @@ void drain_stats(
     uint64_t* out_missing_frames,
     uint64_t* out_requested_frames,
     int32_t* out_path,
-    uint64_t* out_skipped_source_frames
+    uint64_t* out_skipped_source_frames,
+    uint64_t* out_capture_reads
 ) {
     if (out_reads) *out_reads = g_pending_reads.exchange(0, std::memory_order_relaxed);
     if (out_bytes) *out_bytes = g_pending_bytes.exchange(0, std::memory_order_relaxed);
@@ -652,6 +660,8 @@ void drain_stats(
     if (out_path) *out_path = g_last_path.load(std::memory_order_relaxed);
     const auto skipped = g_pending_skipped_source_frames.exchange(0, std::memory_order_relaxed);
     if (out_skipped_source_frames) *out_skipped_source_frames = skipped;
+    const auto captures = g_pending_capture_reads.exchange(0, std::memory_order_relaxed);
+    if (out_capture_reads) *out_capture_reads = captures;
 }
 
 } // namespace glass

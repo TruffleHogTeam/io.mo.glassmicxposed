@@ -31,9 +31,15 @@ class XposedPcmReader(
     private val tempBuf = ByteArray(4096)
     private val metrics = PcmReadMetrics()
     private var lastMetricsReport = SystemClock.elapsedRealtime()
+    @Volatile private var retryAtMs = 0L
+    private var readFailurePending = false
 
     private fun recordRead(wanted: Int, actual: Int, failed: Boolean = false) {
         if (wanted <= 0) return
+        if (!failed && actual > 0 && readFailurePending) {
+            readFailurePending = false
+            XBridge.flushProviderFailures(context, context.packageName, "pcm.read")
+        }
         val reads = metrics.read(wanted, actual, failed)
         if (reads >= 50 || SystemClock.elapsedRealtime() - lastMetricsReport >= 1500L) reportMetrics()
     }
@@ -71,7 +77,10 @@ class XposedPcmReader(
                 totalWritten += n
                 remaining -= n
             }
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            readFailurePending = true
+            XBridge.reportProviderFailure(context.packageName, "pcm.read", t.javaClass.simpleName)
+            retryAtMs = SystemClock.elapsedRealtime() + 2_000L
             closeStream()
             recordRead(size, totalWritten, failed = true)
             return -1
@@ -92,7 +101,10 @@ class XposedPcmReader(
             }
             recordRead(size, totalRead)
             totalRead
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            readFailurePending = true
+            XBridge.reportProviderFailure(context.packageName, "pcm.read", t.javaClass.simpleName)
+            retryAtMs = SystemClock.elapsedRealtime() + 2_000L
             closeStream()
             recordRead(size, totalRead, failed = true)
             -1
@@ -135,12 +147,23 @@ class XposedPcmReader(
 
     private fun ensureStream(): OpenStream? {
         streamRef.get()?.let { return it }
+        val now = SystemClock.elapsedRealtime()
+        if (now < retryAtMs) return null
         val uri = Uri.parse(
             "content://${Constants.PROVIDER_PCM}/stream?sr=$sampleRate&ch=$channels"
         )
+        var openFailure = "NO_FILE_DESCRIPTOR"
         val pfd = runCatching {
             context.contentResolver.openFileDescriptor(uri, "r")
-        }.getOrNull() ?: return null
+        }.onFailure {
+            openFailure = it.javaClass.simpleName
+        }.getOrNull() ?: run {
+            XBridge.reportProviderFailure(context.packageName, "pcm.open", openFailure)
+            retryAtMs = now + 2_000L
+            return null
+        }
+        retryAtMs = 0L
+        XBridge.flushProviderFailures(context, context.packageName, "pcm.open")
         val open = OpenStream(pfd, FileInputStream(pfd.fileDescriptor))
         if (streamRef.compareAndSet(null, open)) return open
         runCatching { open.input.close() }

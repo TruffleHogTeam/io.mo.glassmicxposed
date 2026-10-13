@@ -33,6 +33,8 @@ object XposedHookGate {
         "com.android.dialer",
         "com.google.android.dialer",
         "com.android.bluetooth",
+        // 定位服务不采集虚拟麦克风，避免在系统常驻进程内启动音频轮询。
+        "com.android.location.fused",
         "com.android.nfc",
         "com.android.providers.settings",
         "com.android.providers.media.module",

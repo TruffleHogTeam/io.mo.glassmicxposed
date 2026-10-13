@@ -38,6 +38,10 @@ object SystemVisibilityHook {
     @Volatile private var cachedAllowlist: Set<String> = emptySet()
     @Volatile private var cachedAt = 0L
     private val prefsLock = Any()
+    private var logger: XposedInterface? = null
+    private var lastPrefsDiagnostic: String? = null
+    private val prefsDiagnostics = LinkedHashMap<String, Long>()
+    private val callerDiagnostics = LinkedHashMap<String, Boolean>()
 
     fun install(
         api: XposedInterface,
@@ -45,6 +49,7 @@ object SystemVisibilityHook {
         remotePrefs: () -> SharedPreferences?
     ): Boolean {
         synchronized(this) {
+            logger = api
             prefsProvider = remotePrefs
             if (installed) return true
 
@@ -124,10 +129,21 @@ object SystemVisibilityHook {
 
     private fun callerAllowed(callingSetting: Any?): Boolean {
         val allowlist = visibilityAllowlist()
-        if (allowlist.isEmpty() || callingSetting == null) return false
+        if (callingSetting == null) return false
 
         val callerPackages = packageNamesOf(callingSetting)
-        return callerPackages.any { it in allowlist }
+        val allowed = callerPackages.any { it in allowlist }
+        synchronized(callerDiagnostics) {
+            callerPackages.forEach { pkg ->
+                if (callerDiagnostics[pkg] != allowed) {
+                    callerDiagnostics[pkg] = allowed
+                    logger?.log(Log.INFO, TAG,
+                        "visibility caller=$pkg allowed=$allowed allowlistCount=${allowlist.size}")
+                }
+            }
+            while (callerDiagnostics.size > 32) callerDiagnostics.remove(callerDiagnostics.keys.first())
+        }
+        return allowed
     }
 
     /**
@@ -144,24 +160,44 @@ object SystemVisibilityHook {
             val secondNow = SystemClock.uptimeMillis()
             if (secondNow - cachedAt < PREFS_REFRESH_MS) return cachedAllowlist
 
-            val sp = runCatching { prefsProvider?.invoke() }.getOrNull() ?: prefs
+            val sp = runCatching { prefsProvider?.invoke() }.onFailure {
+                reportPrefsDiagnostic("remote preferences read failed: ${it.javaClass.simpleName}", Log.WARN)
+            }.getOrNull() ?: prefs
             if (sp == null) {
+                reportPrefsDiagnostic("remote preferences unavailable; visibility allowlist is empty", Log.WARN)
                 cachedAllowlist = emptySet()
                 cachedAt = secondNow
                 return cachedAllowlist
             }
 
             prefs = sp
+            val oldAllowlist = cachedAllowlist
             cachedAllowlist = runCatching {
                 sp.getStringSet(Constants.KEY_VISIBILITY_ALLOWLIST, emptySet())
                     ?.asSequence()
                     ?.filter { it.isNotBlank() && it != SELF }
                     ?.toSet()
                     .orEmpty()
+            }.onFailure {
+                reportPrefsDiagnostic("visibility allowlist read failed: ${it.javaClass.simpleName}", Log.WARN)
             }.getOrDefault(emptySet())
+            if (lastPrefsDiagnostic == null || oldAllowlist != cachedAllowlist) {
+                reportPrefsDiagnostic("visibility allowlist refreshed count=${cachedAllowlist.size}", Log.INFO)
+            }
             cachedAt = secondNow
             return cachedAllowlist
         }
+    }
+
+    /** Called under prefsLock; never make a Provider call from system_server for diagnostics. */
+    private fun reportPrefsDiagnostic(message: String, level: Int) {
+        val now = SystemClock.uptimeMillis()
+        val last = prefsDiagnostics[message]
+        if (last != null && now - last < 60_000L) return
+        lastPrefsDiagnostic = message
+        prefsDiagnostics[message] = now
+        if (prefsDiagnostics.size > 8) prefsDiagnostics.remove(prefsDiagnostics.keys.first())
+        logger?.log(level, TAG, message)
     }
 
     /**

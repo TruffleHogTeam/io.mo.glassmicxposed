@@ -81,7 +81,11 @@ static ssize_t my_read(void* thiz, void* buffer, size_t size, bool blocking) {
     ssize_t n = g_orig_read(thiz, buffer, size, blocking);
     if (n <= 0 || !buffer || !thiz) return n;
 
-    if (aaudio_read_in_progress || get_decision() == Decision::REAL_MIC) return n;
+    if (aaudio_read_in_progress) return n;
+    if (get_decision() == Decision::REAL_MIC) {
+        note_capture(CapturePath::AUDIORECORD);
+        return n;
+    }
 
     int32_t sr = 48'000, ch = 1;
     SampleFmt fmt = SampleFmt::S16;

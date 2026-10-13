@@ -8,6 +8,11 @@
 
 using namespace glass;
 
+// This host harness tests PCM delivery; debug tap transport has no host socket implementation.
+namespace glass {
+void tap_capture(const void*, int32_t, int32_t, int32_t, int32_t, int32_t, const void*, int32_t) {}
+}
+
 static void prepare(int frames, int channels = 1, const void* stream = nullptr) {
     set_decision(Decision::FILE);
     std::lock_guard<std::mutex> lock(g_buffer_mutex);
@@ -215,6 +220,30 @@ static void broadcast_history() {
     std::cout << "PASS: bounded history, wraparound, slow/new readers, reset and frame alignment\n";
 }
 
+static void capture_heartbeat() {
+    set_decision(Decision::REAL_MIC);
+    uint64_t reads = 0, captures = 0;
+    auto drain = [&] {
+        drain_stats(&reads, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &captures);
+    };
+    drain(); // Discard earlier fixtures.
+    int16_t real_pcm[] = {321, -456};
+    assert(!fill_pcm(real_pcm, SampleFmt::S16, 1, 48000, 2, CapturePath::AAUDIO_CALLBACK));
+    assert(real_pcm[0] == 321 && real_pcm[1] == -456);
+    drain();
+    assert(captures == 1 && reads == 0); // Activity must not masquerade as replacement.
+    drain();
+    assert(captures == 0 && reads == 0);
+    assert(!fill_pcm(nullptr, SampleFmt::S16, 1, 48000, 2, CapturePath::AAUDIO_READ));
+    drain();
+    assert(captures == 0);
+    set_decision(Decision::SILENCE);
+    assert(fill_pcm(real_pcm, SampleFmt::S16, 1, 48000, 2, CapturePath::OPENSL));
+    drain();
+    assert(captures == 1 && reads == 1);
+    std::cout << "PASS: real-mic capture heartbeat, unchanged PCM and independent replacement counters\n";
+}
+
 int main() {
     read_contract();
     large_buffers();
@@ -222,4 +251,5 @@ int main() {
     contention_and_reset();
     simultaneous_recorders();
     broadcast_history();
+    capture_heartbeat();
 }

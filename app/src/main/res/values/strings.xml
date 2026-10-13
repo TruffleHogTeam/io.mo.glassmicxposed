@@ -234,7 +234,15 @@
     <string name="diag_device_visibility">严格 ROM 兼容</string>
 
     <string name="diag_section_health">全链路健康自检</string>
-    <string name="diag_health_lsposed">LSPosed 注入状态</string>
+    <string name="diag_health_lsposed">LSPosed 通信状态</string>
+    <string name="diag_hook_communication_active">近期可通信 (API %1$d)</string>
+    <string name="diag_hook_communication_stale">曾通信，无近期心跳</string>
+    <string name="diag_hook_communication_none">未收到通信心跳</string>
+    <string name="diag_hook_communication_hint">来源：%1$s · %2$s。心跳不代表目标 App 已成功替换音频。</string>
+    <string name="diag_hook_communication_setup">请确认已在 LSPosed 启用并勾选「系统框架」与目标；隐藏规则也可能阻断通信。</string>
+    <string name="diag_last_replacement">最近替换：%1$s</string>
+    <string name="diag_no_replacement">尚无音频替换记录</string>
+    <string name="diag_decision_repeated">%1$s（重复 %2$d 次）</string>
     <string name="diag_health_service">前台服务与运行态</string>
     <string name="diag_health_scope">生效范围配置</string>
     <string name="diag_health_source">当前音频源状态</string>
@@ -261,7 +269,7 @@
     <string name="diag_probe_hint">本地直接从 PCM 管道拉取音频并可回放试听，验证音频解码与推流管线是否正常通畅。</string>
     <string name="diag_section_decisions">最近拦截决策追踪</string>
     <string name="diag_decisions_empty">暂无应用请求拦截记录（当有目标 App 尝试录音时在此处记录）</string>
-    <string name="diag_decisions_hint">显示目标 App 触发录音钩子时的决策判定及原因（放行 / 劫持）。</string>
+    <string name="diag_decisions_hint">按包保留音源决策变化并合并重复查询。决策来自录音或后台查询，实际替换请查看拦截统计。</string>
     <string name="diag_section_logs">日志管理与诊断包</string>
     <string name="diag_exporting">正在打包诊断数据…</string>
 

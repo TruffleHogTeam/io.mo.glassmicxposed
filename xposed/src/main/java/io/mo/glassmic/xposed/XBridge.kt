@@ -1,9 +1,10 @@
 package io.mo.glassmic.xposed
 
-import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
+import android.util.Log
 import io.mo.glassmic.core.Constants
 import io.mo.glassmic.core.model.SourceType
 import java.util.concurrent.atomic.AtomicInteger
@@ -30,16 +31,16 @@ object XBridge {
         ).apply { allowCoreThreadTimeOut(true) }
     }
 
-    private const val CACHE_TTL_MS = 200L
-    // Provider 被禁用/不可达（= 前台服务未运行）时的回退缓存时长。
-    // 拉长它，避免服务关闭期间某个 App 仍在录音时，每 50ms 就对已禁用的 Provider 空查询一次。
-    private const val UNREACHABLE_TTL_MS = 2000L
-
-    private var cachedSource: SourceType? = null
-    private var cachedAt: Long = 0L
-    private var cachedPkg: String = ""
-    // 上次查询 Provider 是否可达（false = 服务未运行 / Provider 被禁用）
+    private val queryPolicy = SourceQueryPolicy()
+    @Volatile private var cachedSource: SourceType? = null
+    @Volatile private var cachedPkg: String = ""
     @Volatile private var lastReachable: Boolean = true
+
+    private data class ProviderFailure(
+        val reason: String, val firstAt: Long, val lastAt: Long,
+        val count: Long, val lastLogAt: Long
+    )
+    private val providerFailures = LinkedHashMap<String, ProviderFailure>()
 
     @Volatile var currentPackage: String = ""
 
@@ -160,18 +161,49 @@ object XBridge {
         }
     }
 
-    fun resolveSource(ctx: Context, callerPackage: String): SourceType {
-        val now = System.currentTimeMillis()
-        val ttl = if (lastReachable) CACHE_TTL_MS else UNREACHABLE_TTL_MS
-        if (cachedPkg == callerPackage && cachedSource != null && now - cachedAt < ttl) {
-            return cachedSource!!
-        }
+    fun resolveSource(ctx: Context, callerPackage: String, captureObserved: Boolean = true): SourceType {
+        val queryDue = queryPolicy.shouldQuery(SystemClock.uptimeMillis(), captureObserved)
+        val cached = cachedSource
+        if (cachedPkg == callerPackage && cached != null && !queryDue) return cached
 
-        val src = queryProvider(ctx.contentResolver, callerPackage)
+        val src = queryProvider(ctx, callerPackage)
         cachedSource = src
-        cachedAt = now
         cachedPkg = callerPackage
+        queryPolicy.onQuery(SystemClock.uptimeMillis(), lastReachable)
         return src
+    }
+
+    /** Keep evidence locally: trying to report a failed Provider through itself would recurse. */
+    fun reportProviderFailure(callerPackage: String, operation: String, reason: String) {
+        val now = SystemClock.uptimeMillis()
+        val shouldLog = synchronized(providerFailures) {
+            val old = providerFailures[operation]
+            val log = old == null || old.reason != reason || now - old.lastLogAt >= 30_000L
+            providerFailures[operation] = ProviderFailure(
+                reason, old?.firstAt ?: System.currentTimeMillis(), System.currentTimeMillis(),
+                (old?.count ?: 0L) + 1L, if (log) now else old!!.lastLogAt
+            )
+            if (providerFailures.size > 8) providerFailures.remove(providerFailures.keys.first())
+            log
+        }
+        if (shouldLog) Log.w("GlassMic-Provider",
+            "package=$callerPackage operation=$operation reason=$reason; " +
+                "check service state, package visibility and Hide My Applist rules")
+    }
+
+    fun flushProviderFailures(ctx: Context, callerPackage: String, operationPrefix: String) {
+        val pending = synchronized(providerFailures) {
+            providerFailures.filterKeys { it.startsWith(operationPrefix) }.also {
+                it.keys.forEach(providerFailures::remove)
+            }
+        }
+        pending.forEach { (operation, failure) ->
+            reportDiagnosticEvent(ctx, callerPackage, "provider_access_recovered", Bundle().apply {
+                putString("path", operation)
+                putString("reason", failure.reason)
+                putString("detail", "failures=${failure.count} first=${failure.firstAt} last=${failure.lastAt}")
+            })
+        }
     }
 
     /** Pipe data metrics are separate from requested hook bytes (which may include zero padding). */
@@ -188,23 +220,32 @@ object XBridge {
         }
     }
 
-    private fun queryProvider(cr: ContentResolver, pkg: String): SourceType {
+    private fun queryProvider(ctx: Context, pkg: String): SourceType {
         val uri = Uri.parse("content://${Constants.PROVIDER_RUNTIME}/resolve")
         // selectionArgs[1] 带上 api 版本，供 RuntimeProvider 顺手更新「模块已激活」诊断状态，
         // 免去在注入进程 attach 阶段单独 ping（那是复活的主要来源）。
         return runCatching {
-            val c = cr.query(uri, null, null, arrayOf(pkg, apiVersion.toString()), null)
+            val c = ctx.contentResolver.query(uri, null, null, arrayOf(pkg, apiVersion.toString()), null)
             if (c == null) {
-                // Provider 被禁用（服务未运行）→ AMS 不解析、不拉起本进程，直接走真麦
                 lastReachable = false
+                reportProviderFailure(pkg, "runtime.query", "NULL_CURSOR")
                 return SourceType.REAL_MIC
             }
             c.use {
+                if (!it.moveToFirst()) {
+                    lastReachable = false
+                    reportProviderFailure(pkg, "runtime.query", "EMPTY_CURSOR")
+                    return SourceType.REAL_MIC
+                }
+                val source = SourceType.valueOf(it.getString(0))
+                if (!lastReachable) Log.i("GlassMic-Provider", "runtime access recovered package=$pkg")
                 lastReachable = true
-                if (it.moveToFirst()) SourceType.valueOf(it.getString(0)) else SourceType.REAL_MIC
+                flushProviderFailures(ctx, pkg, "runtime.")
+                source
             }
         }.getOrElse {
             lastReachable = false
+            reportProviderFailure(pkg, "runtime.query", it.javaClass.simpleName)
             SourceType.REAL_MIC
         }
     }

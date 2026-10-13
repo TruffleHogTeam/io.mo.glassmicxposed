@@ -13,6 +13,7 @@ object Constants {
     const val XPOSED_STATUS_LAST_PING = "last_ping"
     const val XPOSED_STATUS_LAST_PACKAGE = "last_package"
     const val XPOSED_STATUS_API = "api"
+    const val XPOSED_STATUS_PACKAGES = "package_states"
     const val METHOD_XPOSED_PING = "xposed_ping"
 
     // AudioRecord 拦截统计：由 Xposed 进程周期写入，App 进程读取展示

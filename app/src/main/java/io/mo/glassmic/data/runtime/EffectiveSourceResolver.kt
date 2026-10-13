@@ -5,17 +5,8 @@ import io.mo.glassmic.core.model.ConfigSnapshot
 import io.mo.glassmic.core.model.SourceType
 import io.mo.glassmic.core.util.ScopeMatcher
 import io.mo.glassmic.data.config.ConfigStore
-import java.util.ArrayDeque
 import javax.inject.Inject
 import javax.inject.Singleton
-
-data class DecisionRecord(
-    val timestamp: Long,
-    val callerPackage: String,
-    val result: SourceType,
-    val reasonCode: String,
-    val reasonDescription: String
-)
 
 /**
  * §11 状态优先级唯一权威实现。
@@ -33,8 +24,7 @@ class EffectiveSourceResolver @Inject constructor(
     private val runtime: RuntimeStateHolder
 ) {
 
-    private val lock = Any()
-    private val history = ArrayDeque<DecisionRecord>(30)
+    private val history = DecisionHistory()
 
     /**
      * 返回 [callerPackage] 当前命中后实际应使用的音源类型。
@@ -44,7 +34,8 @@ class EffectiveSourceResolver @Inject constructor(
     fun resolve(callerPackage: String, forAudioPolicy: Boolean = false): SourceType {
         val now = System.currentTimeMillis()
         val (src, code, desc) = resolveInternal(callerPackage, forAudioPolicy)
-        recordDecision(DecisionRecord(now, callerPackage, src, code, desc))
+        history.record(DecisionRecord(now, callerPackage, src, code, desc,
+            backend = if (forAudioPolicy) "AUDIO_POLICY" else "LSPOSED"))
         return src
     }
 
@@ -91,23 +82,10 @@ class EffectiveSourceResolver @Inject constructor(
             SourceType.TTS -> SourceType.FILE
             else -> rt.currentSourceType
         }
-        return Triple(eff, "INTERCEPT_OK", "已正常劫持 (${eff.name})")
+        return Triple(eff, "INTERCEPT_OK", "已选择音源 (${eff.name})，实际替换请查看拦截统计")
     }
 
-    private fun recordDecision(record: DecisionRecord) {
-        synchronized(lock) {
-            if (history.size >= 25) {
-                history.removeFirst()
-            }
-            history.addLast(record)
-        }
-    }
-
-    fun getRecentDecisions(): List<DecisionRecord> {
-        synchronized(lock) {
-            return history.toList().reversed()
-        }
-    }
+    fun getRecentDecisions(): List<DecisionRecord> = history.recent()
 
     /** 给 UI / 通知/ 悬浮窗显示用——和 resolve() 不同，这里返回是否模块整体在运行 */
     fun isModuleActiveForUi(): Boolean {

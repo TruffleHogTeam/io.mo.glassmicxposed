@@ -99,7 +99,7 @@ class LsposedServiceManager @Inject constructor(
                         is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
                     }
                 }
-                editor.commit()
+                if (!editor.commit()) Log.w(tag, "sync remote prefs commit returned false; visibility allowlist may be stale")
             }.onFailure {
                 Log.w(tag, "sync remote prefs failed: ${it.message}")
             }

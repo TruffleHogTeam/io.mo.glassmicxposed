@@ -179,6 +179,11 @@ class DiagnosticBundler @Inject constructor(
             put("last_ping_ms", s.lastPingMs)
             put("last_package", s.lastPackage ?: "")
             put("api", s.api)
+            put("meaning", "Provider communication heartbeat; not proof of recording or replacement")
+            val prefs = context.getSharedPreferences(Constants.XPOSED_STATUS_PREFS, Context.MODE_PRIVATE)
+            put("package_states", runCatching {
+                JSONObject(prefs.getString(Constants.XPOSED_STATUS_PACKAGES, "{}") ?: "{}")
+            }.getOrElse { JSONObject() })
         }.toString(2)
     }
 
@@ -339,6 +344,9 @@ class DiagnosticBundler @Inject constructor(
                 put("result", d.result.name)
                 put("reason_code", d.reasonCode)
                 put("reason_description", d.reasonDescription)
+                put("last_seen", d.lastSeen)
+                put("occurrences", d.occurrences)
+                put("backend", d.backend)
             })
         }
         return arr.toString(2)
