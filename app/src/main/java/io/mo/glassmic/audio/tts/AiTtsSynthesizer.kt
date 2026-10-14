@@ -3,6 +3,8 @@ package io.mo.glassmic.audio.tts
 import android.content.Context
 import android.util.Base64
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.mo.glassmic.R
+import io.mo.glassmic.data.config.AppLocale
 import io.mo.glassmic.data.config.ConfigStore
 import io.mo.glassmic.log.GlassLog
 import io.mo.glassmic.proto.TtsAiConfig
@@ -19,6 +21,7 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.inject.Inject
@@ -41,7 +44,8 @@ import javax.inject.Singleton
 @Singleton
 class AiTtsSynthesizer @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val configStore: ConfigStore
+    private val configStore: ConfigStore,
+    private val progress: TtsProgress
 ) : SpeechSynthesizer {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -49,6 +53,7 @@ class AiTtsSynthesizer @Inject constructor(
 
     override fun synthesize(request: TtsRequest, sink: PcmSink) {
         job?.cancel()
+        progress.start()
         job = scope.launch {
             // 不检查 enabled：正式路径由 TtsSynthesizerFactory 把关，这里也允许「测试连接」直接调用。
             val ai = runCatching { configStore.current().tts.ai }.getOrNull()
@@ -65,6 +70,7 @@ class AiTtsSynthesizer @Inject constructor(
                 }
             }.onFailure {
                 GlassLog.b("Tts") { "AI TTS 失败(${ai.provider}): ${it.message}" }
+                progress.step(str(R.string.tts_step_failed, it.message.orEmpty()))
                 sink.onError("AI TTS 失败: ${it.message}")
             }
         }
@@ -239,14 +245,16 @@ class AiTtsSynthesizer @Inject constructor(
 
     // ============ Fish Audio /v1/tts ============
     private fun fish(ai: TtsAiConfig, req: TtsRequest, sink: PcmSink) {
-        val base = ai.endpoint.ifBlank { "https://api.fish.audio" }.trimEnd('/')
-        val url = when {
-            base.endsWith("/v1/tts") -> base
-            base.endsWith("/v1") -> "$base/tts"
-            else -> "$base/v1/tts"
-        }
         val sampleRate = if (ai.sampleRate > 0) ai.sampleRate else 44_100
-        val text = if (ai.fishAutoTag) fishAutoTag(ai, req.text) else FishAutoTag.stripUnspeakable(req.text).ifBlank { req.text }
+        val text = when {
+            !ai.fishAutoTag -> FishAutoTag.stripUnspeakable(req.text).ifBlank { req.text }
+            // 文本里已有 Fish 标签（通常是上次优化后回填到输入框的结果）→ 直接合成，省掉一次 LLM 往返
+            FishAutoTag.hasFishTags(req.text) -> {
+                progress.step(str(R.string.tts_step_already_tagged))
+                FishAutoTag.keepFishTags(FishAutoTag.singleLine(req.text))
+            }
+            else -> fishAutoTag(ai, req.text)
+        }
         val body = JSONObject()
             .put("text", text)
             // 用裸 PCM（16bit 单声道）而非 WAV：流式 WAV 头的 data 长度可能是占位值，解析不可靠
@@ -254,18 +262,57 @@ class AiTtsSynthesizer @Inject constructor(
             .put("sample_rate", sampleRate)
             .put("normalize", true)
             .put("latency", "normal")
-            .put("temperature", 0.7)
+            .put("temperature", FISH_TEMPERATURE)
             .put("top_p", 0.7)
             .put("chunk_length", 200)
         // 音色留空则不传 reference_id，由 Fish 使用默认音色
         ai.voice.trim().takeIf { it.isNotEmpty() }?.let { body.put("reference_id", it) }
+        val model = ai.model.ifBlank { FISH_MODELS.first() }
         val headers = linkedMapOf(
             "Content-Type" to "application/json",
             "Authorization" to "Bearer ${ai.apiKey}",
-            "model" to ai.model.ifBlank { FISH_MODELS.first() }
+            "model" to model
         )
-        val audio = httpPost(url, headers, body.toString().toByteArray(Charsets.UTF_8))
+        val payload = body.toString().toByteArray(Charsets.UTF_8)
+        progress.step(str(R.string.tts_step_fish_request, model))
+        val t0 = System.currentTimeMillis()
+        val audio = try {
+            httpPost("${fishBase(ai)}/v1/tts", headers, payload)
+        } catch (e: java.io.IOException) {
+            // 网络抖动（如 connection abort）重试一次；HTTP 错误码不重试
+            progress.step(str(R.string.tts_step_retry, e.message ?: e.javaClass.simpleName))
+            httpPost("${fishBase(ai)}/v1/tts", headers, payload)
+        }
+        if (audio.isEmpty()) error(str(R.string.tts_step_fish_empty))
+        progress.step(str(R.string.tts_step_fish_done, seconds(t0), audio.size / 2.0 / sampleRate))
         decodeAudio("pcm", sampleRate, audio, sink)
+    }
+
+    /** Fish 接口根地址：endpoint 留空用官方地址，兼容填了 /v1 或 /v1/tts 的写法。 */
+    private fun fishBase(ai: TtsAiConfig): String =
+        ai.endpoint.ifBlank { "https://api.fish.audio" }.trimEnd('/')
+            .removeSuffix("/tts").removeSuffix("/v1").trimEnd('/')
+
+    /**
+     * 拉取 Fish 声音列表：[query] 为空时取自己账号下的声音，否则按名称搜索公开声音。
+     * 返回 (名称, 声音ID)。
+     */
+    suspend fun fetchFishVoices(query: String): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        val ai = configStore.current().tts.ai
+        require(ai.apiKey.isNotBlank()) { str(R.string.ai_tts_fish_need_key) }
+        val q = query.trim()
+        val params = if (q.isEmpty()) "self=true&page_size=100"
+                     else "title=${URLEncoder.encode(q, "UTF-8")}&page_size=30"
+        val bytes = httpGet("${fishBase(ai)}/model?$params", mapOf("Authorization" to "Bearer ${ai.apiKey}"))
+        val items = JSONObject(String(bytes, Charsets.UTF_8)).optJSONArray("items") ?: JSONArray()
+        (0 until items.length()).mapNotNull { i ->
+            val o = items.optJSONObject(i) ?: return@mapNotNull null
+            val id = o.optString("_id").trim()
+            if (id.isEmpty()) return@mapNotNull null
+            // 名称里的逗号 / 换行会打断「名称:ID」预设格式
+            val title = o.optString("title").replace(Regex("[,，\\s]+"), " ").trim()
+            title.ifEmpty { id } to id
+        }.distinctBy { it.second }
     }
 
     /**
@@ -276,20 +323,24 @@ class AiTtsSynthesizer @Inject constructor(
         val fallback = FishAutoTag.stripUnspeakable(input).ifBlank { input }
         if (ai.llmApiKey.isBlank()) {
             GlassLog.b("Tts") { "Fish 自动标签：未填写 LLM API Key，跳过" }
+            progress.step(str(R.string.tts_step_llm_no_key))
             return fallback
         }
+        val model = ai.llmModel.ifBlank { "deepseek-chat" }
+        progress.step(str(R.string.tts_step_llm_request, model))
+        val t0 = System.currentTimeMillis()
         return runCatching {
             val base = ai.llmEndpoint.ifBlank { "https://api.deepseek.com/v1" }.trimEnd('/')
             val url = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
             val body = JSONObject()
-                .put("model", ai.llmModel.ifBlank { "deepseek-chat" })
+                .put("model", model)
                 .put(
                     "messages",
                     JSONArray()
                         .put(JSONObject().put("role", "system").put("content", FishAutoTag.systemPrompt(ai.fishHumanize)))
                         .put(JSONObject().put("role", "user").put("content", input))
                 )
-                .put("temperature", 0.8)
+                .put("temperature", LLM_TEMPERATURE)
                 .put("max_tokens", 800)
                 .put("stream", false)
                 .toString()
@@ -301,13 +352,25 @@ class AiTtsSynthesizer @Inject constructor(
             val content = JSONObject(String(bytes, Charsets.UTF_8))
                 .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
                 ?.optString("content").orEmpty().trim().trim('"')
-            val tagged = FishAutoTag.keepFishTags(FishAutoTag.stripUnspeakable(content))
-            if (FishAutoTag.hasSpeakableText(tagged)) tagged else fallback
+            val tagged = FishAutoTag.keepFishTags(FishAutoTag.stripUnspeakable(FishAutoTag.singleLine(content)))
+            if (FishAutoTag.hasSpeakableText(tagged)) {
+                progress.step(str(R.string.tts_step_llm_done, seconds(t0)))
+                progress.publishEnhanced(input, tagged)
+                tagged
+            } else {
+                progress.step(str(R.string.tts_step_llm_unusable))
+                fallback
+            }
         }.getOrElse {
             GlassLog.b("Tts") { "Fish 自动标签失败，使用原文: ${it.message}" }
+            progress.step(str(R.string.tts_step_llm_failed, it.message.orEmpty()))
             fallback
         }.also { GlassLog.b("Tts") { "Fish 文本: $it" } }
     }
+
+    private fun str(resId: Int, vararg args: Any): String = AppLocale.string(context, resId, *args)
+
+    private fun seconds(sinceMs: Long): Double = (System.currentTimeMillis() - sinceMs) / 1000.0
 
     /** 读取 voiceclone 参考音频文件 → data:audio/...;base64,... （MiMo 仅支持 wav / mpeg）。 */
     private fun cloneSampleDataUri(relativePath: String): String? {
@@ -408,6 +471,10 @@ class AiTtsSynthesizer @Inject constructor(
     private companion object {
         /** Fish model 头可选值，第一个为默认（免费版 S2.1 Pro）。 */
         val FISH_MODELS = listOf("s2.1-pro-free", "s2.1-pro", "s2-pro", "s1")
+
+        /** Fish 合成与自动标签 LLM 的采样温度：取低值，语气与措辞更稳定、可复现。 */
+        const val FISH_TEMPERATURE = 0.2
+        const val LLM_TEMPERATURE = 0.2
     }
 
     private fun readAll(input: InputStream): ByteArray {

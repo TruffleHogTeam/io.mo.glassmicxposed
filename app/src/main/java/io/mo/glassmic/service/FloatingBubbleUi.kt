@@ -172,6 +172,8 @@ fun FloatingBubbleRoot(
     onSelectFishVoice: (String) -> Unit = {},
     fishEnhance: Boolean = false,
     onToggleFishEnhance: (Boolean) -> Unit = {},
+    ttsProgressLines: List<String> = emptyList(),
+    ttsEnhanced: Pair<String, String>? = null,
 ) {
     // 面板尺寸：拖动中实时变化，松手后经 onResizePanel 存进配置。
     // 对象只创建一次——拖动手势在 pointerInput(Unit) 里常驻，若配置一变就换新对象，
@@ -207,6 +209,12 @@ fun FloatingBubbleRoot(
     val miniContent: @Composable BoxScope.(Dp) -> Unit = { side -> MiniPlayButton(miniEnabled, miniPlaying, side) }
     // TTS 草稿提到这一层：切 tab 会重建下方内容，草稿放在 TtsTab 内部会被清空。
     var ttsDraft by remember { mutableStateOf("") }
+    // 自动标签完成后把带标签的文本回填到输入框（仅当输入框仍是送去优化的那段原文），
+    // 用户能看到加了哪些标签，再次生成时也会跳过 LLM 直接合成
+    LaunchedEffect(ttsEnhanced) {
+        val (original, tagged) = ttsEnhanced ?: return@LaunchedEffect
+        if (ttsDraft.trim() == original.trim()) ttsDraft = tagged
+    }
     // 音频库当前查看的分组，同理提到这一层；默认跟随当前音源所在分组。
     var browsingGroupId by remember { mutableStateOf<String?>(null) }
 
@@ -313,7 +321,8 @@ fun FloatingBubbleRoot(
                             fishVoiceId = fishVoiceId,
                             onSelectFishVoice = onSelectFishVoice,
                             fishEnhance = fishEnhance,
-                            onToggleFishEnhance = onToggleFishEnhance
+                            onToggleFishEnhance = onToggleFishEnhance,
+                            progressLines = ttsProgressLines
                         )
                     }
                 }
@@ -916,6 +925,7 @@ private fun TtsTab(
     onSelectFishVoice: (String) -> Unit = {},
     fishEnhance: Boolean = false,
     onToggleFishEnhance: (Boolean) -> Unit = {},
+    progressLines: List<String> = emptyList(),
 ) {
     val t = glass
     val counting = delayRemainingMs > 0
@@ -1007,6 +1017,11 @@ private fun TtsTab(
         Text(stringResource(R.string.float_tts_generate_failed), fontSize = 12.sp, color = t.err)
     }
 
+    // 生成过程：LLM 优化 / 请求合成 / 耗时 / 错误，逐行显示
+    if (progressLines.isNotEmpty() && (generating || ready || failed)) {
+        GenerateLog(progressLines, generating)
+    }
+
     // 进度条：开启后，生成就绪或正在播放时显示
     if (progressBarEnabled && (ready || ttsActive)) {
         val hasDuration = durationMs > 0
@@ -1023,6 +1038,33 @@ private fun TtsTab(
                 )
                 Text(formatMs(if (hasDuration) durationMs else 0L), fontSize = 11.sp, color = t.ink3, fontFamily = MonoFamily)
             }
+        }
+    }
+}
+
+/** 生成日志：等宽小字，最后一行在生成中高亮。 */
+@Composable
+private fun GenerateLog(lines: List<String>, generating: Boolean) {
+    val t = glass
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(t.fill)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        lines.forEachIndexed { i, line ->
+            val current = generating && i == lines.lastIndex
+            Text(
+                line,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                fontFamily = MonoFamily,
+                color = if (current) t.ink else t.ink3,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

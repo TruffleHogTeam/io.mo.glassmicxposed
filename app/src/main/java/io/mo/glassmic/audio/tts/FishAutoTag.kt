@@ -65,11 +65,32 @@ internal object FishAutoTag {
     fun stripUnspeakable(text: String): String =
         text.replace(actionRegex, "").replace(emojiRegex, "").replace(spacesRegex, " ").trim()
 
-    /** 只保留 Fish 内置标签，其余 [xxx] 删除。 */
-    fun keepFishTags(text: String): String =
-        tagRegex.replace(text) { m ->
-            if (m.groupValues[1].trim().lowercase() in allowed) m.value else ""
-        }.replace(spacesRegex, " ").trim()
+    /**
+     * 只保留 Fish 内置标签（统一写成小写 [tag]），其余 [xxx] 删除；
+     * 落单的 [ 或 ] 也去掉——LLM 输出被截断时会留下半个括号，Fish 会照读甚至返回空音频。
+     */
+    fun keepFishTags(text: String): String {
+        val out = StringBuilder()
+        var last = 0
+        for (m in tagRegex.findAll(text)) {
+            out.append(text, last, m.range.first)
+            val name = m.groupValues[1].trim().lowercase()
+            if (name in allowed) out.append('\u0000').append(name).append('\u0001')
+            last = m.range.last + 1
+        }
+        out.append(text, last, text.length)
+        return out.toString()
+            .replace("[", "").replace("]", "")
+            .replace('\u0000', '[').replace('\u0001', ']')
+            .replace(spacesRegex, " ").trim()
+    }
+
+    /** 文本里是否已经带有 Fish 内置标签（例如已优化过的文本被再次生成）。 */
+    fun hasFishTags(text: String): Boolean =
+        tagRegex.findAll(text).any { it.groupValues[1].trim().lowercase() in allowed }
+
+    /** LLM 输出可能带换行 / 多余空白，Fish 会读坏，压成单行。 */
+    fun singleLine(text: String): String = text.replace(Regex("\\s+"), " ").trim()
 
     /** 去掉全部标签后是否还有可读内容（用来判断 LLM 输出是否可用）。 */
     fun hasSpeakableText(text: String): Boolean = tagRegex.replace(text, "").isNotBlank()

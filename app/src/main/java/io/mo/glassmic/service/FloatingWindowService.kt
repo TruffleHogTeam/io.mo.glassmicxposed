@@ -39,6 +39,7 @@ import io.mo.glassmic.proto.FloatingSize
 import io.mo.glassmic.proto.TtsAiConfig
 import io.mo.glassmic.proto.TtsProvider
 import io.mo.glassmic.audio.tts.FishVoices
+import io.mo.glassmic.audio.tts.TtsProgress
 import io.mo.glassmic.ui.theme.GlassThemeContent
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,6 +66,7 @@ class FloatingWindowService : LifecycleService() {
     @Inject lateinit var audioDao: AudioDao
     @Inject lateinit var iconStore: FloatingIconStore
     @Inject lateinit var volumeShortcut: VolumeShortcutRepository
+    @Inject lateinit var ttsProgress: TtsProgress
 
     private var windowManager: WindowManager? = null
     private var host: FloatingOverlayHost? = null
@@ -249,6 +251,8 @@ class FloatingWindowService : LifecycleService() {
                 val ttsGen by playback.ttsGen.collectAsState()
                 val ttsPreviewing by playback.ttsPreviewing.collectAsState()
                 val ttsDelayRemainingMs by playback.ttsDelayRemainingMs.collectAsState()
+                val ttsProgressLines by ttsProgress.lines.collectAsState()
+                val ttsEnhanced by ttsProgress.enhanced.collectAsState()
 
                 val activeFile = (rt.currentSourceType == SourceType.FILE || rt.currentSourceType == SourceType.TTS) && rt.enabled && !rt.safeMode
                 val currentId = cfg.currentAudioId
@@ -317,6 +321,8 @@ class FloatingWindowService : LifecycleService() {
                     onSelectFishVoice = { id -> updateFishAi { it.voice = id } },
                     fishEnhance = cfg.tts.ai.fishAutoTag,
                     onToggleFishEnhance = { on -> updateFishAi { it.fishAutoTag = on } },
+                    ttsProgressLines = ttsProgressLines,
+                    ttsEnhanced = ttsEnhanced?.let { it.original to it.tagged },
                 )
             }
         }
