@@ -472,8 +472,9 @@ class AiTtsSynthesizer @Inject constructor(
         /** Fish model 头可选值，第一个为默认（免费版 S2.1 Pro）。 */
         val FISH_MODELS = listOf("s2.1-pro-free", "s2.1-pro", "s2-pro", "s1")
 
-        /** Fish 合成与自动标签 LLM 的采样温度：取低值，语气与措辞更稳定、可复现。 */
-        const val FISH_TEMPERATURE = 0.2
+        /** Fish 合成温度：保留一定随机性，语气更自然。 */
+        const val FISH_TEMPERATURE = 0.7
+        /** 自动标签 LLM 温度：取低值，标签与措辞更稳定、少改写。 */
         const val LLM_TEMPERATURE = 0.2
     }
 

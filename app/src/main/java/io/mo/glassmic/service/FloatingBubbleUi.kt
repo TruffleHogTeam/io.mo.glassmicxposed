@@ -963,6 +963,23 @@ private fun TtsTab(
             color = if (isStreaming) t.err else t.ink3,
             modifier = Modifier.weight(1f)
         )
+        if (text.isNotEmpty()) {
+            Box(
+                Modifier
+                    .height(30.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(t.fill)
+                    .clickable { onTextChange("") }
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    stringResource(R.string.float_tts_clear),
+                    fontSize = 12.sp, fontWeight = FontWeight.Medium, color = t.ink2
+                )
+            }
+            Spacer(Modifier.width(6.dp))
+        }
         Box(
             Modifier
                 .height(30.dp)

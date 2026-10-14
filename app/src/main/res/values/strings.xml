@@ -524,4 +524,5 @@
     <string name="ai_tts_fish_search">搜索</string>
     <string name="ai_tts_fish_fetching">加载中…</string>
     <string name="ai_tts_fish_no_voices">没有找到声音</string>
+    <string name="float_tts_clear">清空</string>
 </resources>
