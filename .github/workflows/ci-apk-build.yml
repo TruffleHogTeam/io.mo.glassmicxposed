@@ -1,4 +1,4 @@
-name: Temporary APK build (not for PR)
+name: Temporary signed APK build (not for PR)
 
 on:
   push:
@@ -28,9 +28,28 @@ jobs:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager "platforms;android-35" "platforms;android-36" "build-tools;36.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
-      - run: bash ./gradlew :app:assembleDebug --no-daemon --console=plain
+      - run: bash ./gradlew :app:assembleRelease --no-daemon --console=plain
+      - name: Sign with the fixed test key
+        env:
+          KS_B64: ${{ secrets.TEST_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.TEST_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.TEST_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.TEST_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$KS_B64"
+          umask 077
+          ks="$RUNNER_TEMP/test.jks"
+          trap 'rm -f "$ks"' EXIT
+          printf '%s' "$KS_B64" | base64 --decode > "$ks"
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          mkdir -p dist
+          "$tools/zipalign" -P 16 -f 4 app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" sign --ks "$ks" --ks-pass env:KS_PASS --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASS \
+            --out dist/GlassMic-fish-test.apk "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" verify --print-certs dist/GlassMic-fish-test.apk | grep SHA-256
       - uses: actions/upload-artifact@v4
         with:
-          name: glassmic-fish-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: glassmic-fish-test
+          path: dist/GlassMic-fish-test.apk
           retention-days: 14
