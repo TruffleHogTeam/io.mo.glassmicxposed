@@ -187,6 +187,13 @@ fun AiTtsSettingsScreen(
                                 fontSize = 12.sp, lineHeight = 17.sp, color = t.ink3,
                                 modifier = Modifier.padding(bottom = 6.dp)
                             )
+                            val fishVoiceResults by vm.fishVoiceResults.collectAsState()
+                            FishVoicePicker(
+                                state = fishVoiceResults,
+                                onFetch = vm::fetchFishVoices,
+                                onPick = vm::pickFishVoice,
+                                onDismiss = vm::dismissFishVoices
+                            )
                             SwitchRow(
                                 label = stringResource(R.string.ai_tts_fish_auto_tag),
                                 hint = stringResource(R.string.ai_tts_fish_auto_tag_hint),
@@ -308,6 +315,52 @@ private fun ProtocolCard(name: String, api: String, selected: Boolean, onClick: 
 private fun TextFieldRow(label: String, initial: String, placeholder: String?, onCommit: (String) -> Unit, mono: Boolean = true) {
     var value by remember(initial) { mutableStateOf(initial) }
     LabeledField(label, value, { value = it; onCommit(it) }, placeholder, mono)
+}
+
+/** 获取 Fish 声音：搜索框留空 = 我的声音，否则按名称搜索；下拉中选一个即设为当前音色并加入预设。 */
+@Composable
+private fun FishVoicePicker(
+    state: FishVoicesState,
+    onFetch: (String) -> Unit,
+    onPick: (String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val t = glass
+    var query by remember { mutableStateOf("") }
+    val loading = state is FishVoicesState.Loading
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
+        GlassTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier.weight(1f),
+            placeholder = stringResource(R.string.ai_tts_fish_voice_search_hint)
+        )
+        Spacer(Modifier.width(10.dp))
+        Box {
+            SoftButton(
+                when {
+                    loading -> stringResource(R.string.ai_tts_fish_fetching)
+                    query.isBlank() -> stringResource(R.string.ai_tts_fish_my_voices)
+                    else -> stringResource(R.string.ai_tts_fish_search)
+                },
+                onClick = { onFetch(query) },
+                enabled = !loading
+            )
+            DropdownMenu(
+                expanded = state is FishVoicesState.Loaded,
+                onDismissRequest = onDismiss,
+                shape = RoundedCornerShape(18.dp),
+                containerColor = t.sheet
+            ) {
+                (state as? FishVoicesState.Loaded)?.voices?.forEach { (name, id) ->
+                    DropdownMenuItem(text = { Text(name, fontSize = 14.sp) }, onClick = { onPick(name, id) })
+                }
+            }
+        }
+    }
+    if (state is FishVoicesState.Error) {
+        Text(state.message, fontSize = 12.sp, lineHeight = 17.sp, color = t.err, modifier = Modifier.padding(bottom = 6.dp))
+    }
 }
 
 @Composable

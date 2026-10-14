@@ -1,18 +1,23 @@
 package io.mo.glassmic.data.audio
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import dagger.hilt.android.qualifiers.ApplicationContext
 import io.mo.glassmic.audio.BufferedPcmSource
 import io.mo.glassmic.audio.FileAudioSource
 import io.mo.glassmic.audio.Pcm16Converter
 import io.mo.glassmic.audio.SharedPcmPublisher
 import io.mo.glassmic.audio.SilenceSource
+import io.mo.glassmic.R
 import io.mo.glassmic.audio.tts.PcmSink
+import io.mo.glassmic.audio.tts.TtsProgress
 import io.mo.glassmic.audio.tts.TtsRequest
 import io.mo.glassmic.audio.tts.TtsSynthesizerFactory
 import io.mo.glassmic.core.model.SourceType
+import io.mo.glassmic.data.config.AppLocale
 import io.mo.glassmic.data.config.ConfigStore
 import io.mo.glassmic.data.db.AudioDao
 import io.mo.glassmic.data.runtime.RuntimeStateHolder
@@ -53,7 +58,9 @@ class PlaybackController @Inject constructor(
     private val configStore: ConfigStore,
     private val runtime: RuntimeStateHolder,
     private val dao: AudioDao,
-    private val ttsFactory: TtsSynthesizerFactory
+    private val ttsFactory: TtsSynthesizerFactory,
+    private val ttsProgress: TtsProgress,
+    @ApplicationContext private val context: Context
 ) : MemoryReleasable {
 
     init {
@@ -192,7 +199,12 @@ class PlaybackController @Inject constructor(
             pitch = ttsCfg.pitch.takeIf { it > 0f } ?: 1f,
             voice = ttsCfg.voice
         )
-        val pcm = withTimeoutOrNull(30_000L) { synthesizeToMasterPcm(synth, req) }
+        ttsProgress.start()
+        // AI TTS 可能先走一次 LLM 自动标签再合成，长文本两段加起来常超过 30s，给足余量
+        val pcm = withTimeoutOrNull(TTS_GENERATE_TIMEOUT_MS) { synthesizeToMasterPcm(synth, req) }
+        if (pcm == null) {
+            ttsProgress.step(AppLocale.string(context, R.string.tts_step_timeout, TTS_GENERATE_TIMEOUT_MS / 1000))
+        }
         if (pcm != null && pcm.isNotEmpty()) {
             generatedTtsPcm = pcm
             _ttsGen.value = TtsGen.READY
@@ -291,6 +303,7 @@ class PlaybackController @Inject constructor(
         const val MASTER_SAMPLE_RATE = 48_000
         const val MASTER_CHANNELS = 1
         const val COUNTDOWN_TICK_MS = 100L
+        const val TTS_GENERATE_TIMEOUT_MS = 90_000L
     }
 
     /** 切回真实麦克风：释放当前 file source，运行态置 REAL_MIC，清空持久化选中。 */
