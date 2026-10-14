@@ -479,6 +479,10 @@ class FloatingWindowService : LifecycleService() {
         }
         lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         runCatching { windowManager?.updateViewLayout(h.view, lp) }
+        // 窗口创建时不可聚焦，Compose 视图拿不到 View 焦点：输入法 commitText 能打字，
+        // 但以按键事件发送的退格（KEYCODE_DEL，多数键盘的删除键）会被丢掉，删不了字。
+        // 变为可聚焦后显式请求焦点，让按键事件能送到文本框。
+        if (focusable) h.view.post { h.view.requestFocus() }
     }
 
     /** 屏幕安全区域，始终预留系统栏、刘海和 8dp 边距。Android 10 使用稳定 Insets。 */
