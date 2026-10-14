@@ -117,7 +117,8 @@ fun AiTtsSettingsScreen(
                         listOf(
                             Triple(TtsProvider.OPENAI, "OpenAI", "/audio/speech"),
                             Triple(TtsProvider.GEMINI, "Google Gemini", "generateContent"),
-                            Triple(TtsProvider.MIMO, stringResource(R.string.ai_tts_provider_mimo_name), "chat/completions")
+                            Triple(TtsProvider.MIMO, stringResource(R.string.ai_tts_provider_mimo_name), "chat/completions"),
+                            Triple(TtsProvider.FISH, "Fish Audio", "/v1/tts")
                         ).forEach { (p, name, api) ->
                             ProtocolCard(name, api, selected = provider == p) { vm.setProvider(p) }
                         }
@@ -167,6 +168,41 @@ fun AiTtsSettingsScreen(
                                     Spacer(Modifier.width(6.dp))
                                 }
                                 SoftButton(stringResource(R.string.ai_tts_choose_audio), { sampleLauncher.launch(arrayOf("audio/*")) }, height = 32.dp)
+                            }
+                        }
+                    }
+                }
+
+                if (provider == TtsProvider.FISH) {
+                    item {
+                        Section(stringResource(R.string.ai_tts_section_fish)) {
+                            Text(
+                                stringResource(R.string.ai_tts_fish_hint),
+                                fontSize = 12.sp, lineHeight = 17.sp, color = t.ink3,
+                                modifier = Modifier.padding(vertical = 10.dp)
+                            )
+                            TextFieldRow(stringResource(R.string.ai_tts_fish_voices), ai.fishVoices, stringResource(R.string.ai_tts_fish_voices_placeholder), vm::setFishVoices, mono = false)
+                            Text(
+                                stringResource(R.string.ai_tts_fish_voices_hint),
+                                fontSize = 12.sp, lineHeight = 17.sp, color = t.ink3,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                            SwitchRow(
+                                label = stringResource(R.string.ai_tts_fish_auto_tag),
+                                hint = stringResource(R.string.ai_tts_fish_auto_tag_hint),
+                                checked = ai.fishAutoTag,
+                                onChange = vm::setFishAutoTag
+                            )
+                            if (ai.fishAutoTag) {
+                                SwitchRow(
+                                    label = stringResource(R.string.ai_tts_fish_humanize),
+                                    hint = stringResource(R.string.ai_tts_fish_humanize_hint),
+                                    checked = ai.fishHumanize,
+                                    onChange = vm::setFishHumanize
+                                )
+                                TextFieldRow(stringResource(R.string.ai_tts_llm_endpoint), ai.llmEndpoint, "https://api.deepseek.com/v1", vm::setLlmEndpoint)
+                                TextFieldRow(stringResource(R.string.ai_tts_llm_api_key), ai.llmApiKey, "sk-…", vm::setLlmApiKey)
+                                TextFieldRow(stringResource(R.string.ai_tts_llm_model), ai.llmModel, "deepseek-chat", vm::setLlmModel)
                             }
                         }
                     }

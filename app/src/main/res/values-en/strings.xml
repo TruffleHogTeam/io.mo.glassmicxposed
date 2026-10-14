@@ -491,4 +491,19 @@
     <string name="settings_floating_panel_reset">Reset</string>
     <string name="float_pause">Pause</string>
     <string name="float_play_resume">Play / resume</string>
+    <string name="ai_tts_section_fish">Fish Audio</string>
+    <string name="ai_tts_fish_hint">API Key: your Fish Audio key. Model: s2.1-pro-free (free) / s2.1-pro / s2-pro / s1. Voice: a Fish voice ID (the code after /m/ in the voice URL; empty = Fish\'s default voice).</string>
+    <string name="ai_tts_fish_auto_tag">Auto tags</string>
+    <string name="ai_tts_fish_auto_tag_hint">Before synthesis, an LLM inserts Fish\'s built-in emotion / effect tags (e.g. [breathy], [laughing], [pause]) so the voice sounds human</string>
+    <string name="ai_tts_fish_humanize">Humanize wording</string>
+    <string name="ai_tts_fish_humanize_hint">On: rewrites the text to sound more casual (fillers, hesitations). Off: keeps your exact words and only adds tags</string>
+    <string name="ai_tts_llm_endpoint">LLM endpoint</string>
+    <string name="ai_tts_llm_api_key">LLM API key</string>
+    <string name="ai_tts_llm_model">LLM model</string>
+    <string name="ai_tts_fish_voices">Voice presets</string>
+    <string name="ai_tts_fish_voices_placeholder">Name:voice ID, Name:voice ID</string>
+    <string name="ai_tts_fish_voices_hint">Optional. Comma-separated name:voice ID pairs. They show as quick-switch buttons in the floating window\'s TTS tab, and picking one fills the Voice field.</string>
+    <string name="float_tts_voice">Voice</string>
+    <string name="float_tts_voice_custom">Custom</string>
+    <string name="float_tts_enhance">Enhance text (auto tags)</string>
 </resources>

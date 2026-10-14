@@ -491,4 +491,19 @@
     <string name="settings_floating_panel_reset">恢复默认</string>
     <string name="float_pause">暂停</string>
     <string name="float_play_resume">播放 / 继续</string>
+    <string name="ai_tts_section_fish">Fish Audio</string>
+    <string name="ai_tts_fish_hint">API Key 填 Fish Audio 的密钥；模型可选 s2.1-pro-free（免费）/ s2.1-pro / s2-pro / s1；音色填 Fish 声音 ID（网址 /m/ 后那串，留空使用 Fish 默认音色）。</string>
+    <string name="ai_tts_fish_auto_tag">自动标签</string>
+    <string name="ai_tts_fish_auto_tag_hint">合成前用 LLM 自动插入 Fish 内置情绪 / 音效标签（如 [breathy]、[laughing]、[pause]），让语音更像真人</string>
+    <string name="ai_tts_fish_humanize">口语化改写</string>
+    <string name="ai_tts_fish_humanize_hint">开启后会把措辞改得更口语（加语气词、停顿）；关闭则一字不改，只加标签</string>
+    <string name="ai_tts_llm_endpoint">LLM 接口地址</string>
+    <string name="ai_tts_llm_api_key">LLM API Key</string>
+    <string name="ai_tts_llm_model">LLM 模型</string>
+    <string name="ai_tts_fish_voices">音色预设</string>
+    <string name="ai_tts_fish_voices_placeholder">名称:声音ID, 名称:声音ID</string>
+    <string name="ai_tts_fish_voices_hint">可选。逗号分隔的「名称:声音ID」，会在悬浮窗文字转语音页显示为快捷切换按钮，选中后写入「音色」。</string>
+    <string name="float_tts_voice">音色</string>
+    <string name="float_tts_voice_custom">自定义</string>
+    <string name="float_tts_enhance">优化文本（自动标签）</string>
 </resources>

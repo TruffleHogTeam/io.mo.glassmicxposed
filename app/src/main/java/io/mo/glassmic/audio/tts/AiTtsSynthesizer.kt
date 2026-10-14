@@ -32,6 +32,8 @@ import javax.inject.Singleton
  *                         返回 base64 PCM（默认 24kHz、16bit、单声道）。
  * - [TtsProvider.MIMO]  ：小米 MiMo，POST {base}/chat/completions（api-key 头 + audio 参数），
  *                         音频以 base64 藏在 message 里。
+ * - [TtsProvider.FISH]  ：Fish Audio，POST {base}/v1/tts（model 头 + reference_id 音色），返回 16bit PCM。
+ *                         可选「自动标签」：先经 OpenAI 兼容 LLM 插入 Fish 情绪/音效标签（[FishAutoTag]）。
  *
  * （Anthropic 官方无 TTS 接口，故不支持。）
  * endpoint / model 留空时按 provider 用默认值。合成结果统一以 PCM16 经 [PcmSink] 回调。
@@ -58,6 +60,7 @@ class AiTtsSynthesizer @Inject constructor(
                 when (ai.provider) {
                     TtsProvider.GEMINI -> gemini(ai, request, sink)
                     TtsProvider.MIMO -> mimo(ai, request, sink)
+                    TtsProvider.FISH -> fish(ai, request, sink)
                     else -> openAi(ai, request, sink) // OPENAI 及默认
                 }
             }.onFailure {
@@ -81,6 +84,7 @@ class AiTtsSynthesizer @Inject constructor(
         val models = when (ai.provider) {
             TtsProvider.GEMINI -> geminiModels(ai)
             TtsProvider.MIMO -> openAiStyleModels(ai, "https://api.xiaomimimo.com/v1", apiKeyHeader = true)
+            TtsProvider.FISH -> FISH_MODELS // Fish 无模型列表接口，model 头可选值固定
             else -> openAiStyleModels(ai, "https://api.openai.com/v1", apiKeyHeader = false)
         }
         models.distinct().sortedWith(compareByDescending<String> { it.contains("tts", true) }.thenBy { it })
@@ -233,6 +237,78 @@ class AiTtsSynthesizer @Inject constructor(
         decodeAudio(format, if (ai.sampleRate > 0) ai.sampleRate else 24_000, audio, sink)
     }
 
+    // ============ Fish Audio /v1/tts ============
+    private fun fish(ai: TtsAiConfig, req: TtsRequest, sink: PcmSink) {
+        val base = ai.endpoint.ifBlank { "https://api.fish.audio" }.trimEnd('/')
+        val url = when {
+            base.endsWith("/v1/tts") -> base
+            base.endsWith("/v1") -> "$base/tts"
+            else -> "$base/v1/tts"
+        }
+        val sampleRate = if (ai.sampleRate > 0) ai.sampleRate else 44_100
+        val text = if (ai.fishAutoTag) fishAutoTag(ai, req.text) else FishAutoTag.stripUnspeakable(req.text).ifBlank { req.text }
+        val body = JSONObject()
+            .put("text", text)
+            // 用裸 PCM（16bit 单声道）而非 WAV：流式 WAV 头的 data 长度可能是占位值，解析不可靠
+            .put("format", "pcm")
+            .put("sample_rate", sampleRate)
+            .put("normalize", true)
+            .put("latency", "normal")
+            .put("temperature", 0.7)
+            .put("top_p", 0.7)
+            .put("chunk_length", 200)
+        // 音色留空则不传 reference_id，由 Fish 使用默认音色
+        ai.voice.trim().takeIf { it.isNotEmpty() }?.let { body.put("reference_id", it) }
+        val headers = linkedMapOf(
+            "Content-Type" to "application/json",
+            "Authorization" to "Bearer ${ai.apiKey}",
+            "model" to ai.model.ifBlank { FISH_MODELS.first() }
+        )
+        val audio = httpPost(url, headers, body.toString().toByteArray(Charsets.UTF_8))
+        decodeAudio("pcm", sampleRate, audio, sink)
+    }
+
+    /**
+     * 用 OpenAI 兼容 LLM 给文本插入 Fish 内置标签。
+     * 未配置 key 或调用失败时退回原文（去掉 emoji / *动作*），不影响合成。
+     */
+    private fun fishAutoTag(ai: TtsAiConfig, input: String): String {
+        val fallback = FishAutoTag.stripUnspeakable(input).ifBlank { input }
+        if (ai.llmApiKey.isBlank()) {
+            GlassLog.b("Tts") { "Fish 自动标签：未填写 LLM API Key，跳过" }
+            return fallback
+        }
+        return runCatching {
+            val base = ai.llmEndpoint.ifBlank { "https://api.deepseek.com/v1" }.trimEnd('/')
+            val url = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
+            val body = JSONObject()
+                .put("model", ai.llmModel.ifBlank { "deepseek-chat" })
+                .put(
+                    "messages",
+                    JSONArray()
+                        .put(JSONObject().put("role", "system").put("content", FishAutoTag.systemPrompt(ai.fishHumanize)))
+                        .put(JSONObject().put("role", "user").put("content", input))
+                )
+                .put("temperature", 0.8)
+                .put("max_tokens", 800)
+                .put("stream", false)
+                .toString()
+            val headers = linkedMapOf(
+                "Content-Type" to "application/json",
+                "Authorization" to "Bearer ${ai.llmApiKey}"
+            )
+            val bytes = httpPost(url, headers, body.toByteArray(Charsets.UTF_8))
+            val content = JSONObject(String(bytes, Charsets.UTF_8))
+                .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                ?.optString("content").orEmpty().trim().trim('"')
+            val tagged = FishAutoTag.keepFishTags(FishAutoTag.stripUnspeakable(content))
+            if (FishAutoTag.hasSpeakableText(tagged)) tagged else fallback
+        }.getOrElse {
+            GlassLog.b("Tts") { "Fish 自动标签失败，使用原文: ${it.message}" }
+            fallback
+        }.also { GlassLog.b("Tts") { "Fish 文本: $it" } }
+    }
+
     /** 读取 voiceclone 参考音频文件 → data:audio/...;base64,... （MiMo 仅支持 wav / mpeg）。 */
     private fun cloneSampleDataUri(relativePath: String): String? {
         if (relativePath.isBlank()) return null
@@ -327,6 +403,11 @@ class AiTtsSynthesizer @Inject constructor(
         } finally {
             conn.disconnect()
         }
+    }
+
+    private companion object {
+        /** Fish model 头可选值，第一个为默认（免费版 S2.1 Pro）。 */
+        val FISH_MODELS = listOf("s2.1-pro-free", "s2.1-pro", "s2-pro", "s1")
     }
 
     private fun readAll(input: InputStream): ByteArray {

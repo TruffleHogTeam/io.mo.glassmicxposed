@@ -36,6 +36,9 @@ import io.mo.glassmic.data.runtime.VolumeShortcutRepository
 import io.mo.glassmic.log.GlassLog
 import io.mo.glassmic.proto.AppConfig
 import io.mo.glassmic.proto.FloatingSize
+import io.mo.glassmic.proto.TtsAiConfig
+import io.mo.glassmic.proto.TtsProvider
+import io.mo.glassmic.audio.tts.FishVoices
 import io.mo.glassmic.ui.theme.GlassThemeContent
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -308,6 +311,12 @@ class FloatingWindowService : LifecycleService() {
                     panelWidthDp = cfg.floatingWindow.panelWidthDp,
                     panelHeightDp = cfg.floatingWindow.panelHeightDp,
                     onResizePanel = { w, h -> onResizePanel(w, h) },
+                    fishMode = cfg.tts.ai.enabled && cfg.tts.ai.provider == TtsProvider.FISH,
+                    fishVoices = FishVoices.parse(cfg.tts.ai.fishVoices),
+                    fishVoiceId = cfg.tts.ai.voice.trim(),
+                    onSelectFishVoice = { id -> updateFishAi { it.voice = id } },
+                    fishEnhance = cfg.tts.ai.fishAutoTag,
+                    onToggleFishEnhance = { on -> updateFishAi { it.fishAutoTag = on } },
                 )
             }
         }
@@ -366,6 +375,15 @@ class FloatingWindowService : LifecycleService() {
         ttsPlayJob?.cancel()
         ttsPlayJob = null
         playback.clearTtsDelayCountdown()
+    }
+
+    /** 悬浮窗里切换 Fish 音色 / 优化文本开关，直接写回 AI TTS 配置（与设置页同步）。 */
+    private fun updateFishAi(transform: (TtsAiConfig.Builder) -> Unit) {
+        lifecycleScope.launch {
+            configStore.update {
+                it.setTts(it.tts.toBuilder().setAi(it.tts.ai.toBuilder().also(transform)).build())
+            }
+        }
     }
 
     private fun onToggleTtsProgressBar(enabled: Boolean) {

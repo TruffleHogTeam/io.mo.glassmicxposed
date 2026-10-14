@@ -90,6 +90,12 @@ class AiTtsViewModel @Inject constructor(
     fun setFormat(v: String) = updateAi { it.format = v }
     fun setStylePrompt(v: String) = updateAi { it.stylePrompt = v }
     fun setMimoOptimizeTextPreview(v: Boolean) = updateAi { it.mimoOptimizeTextPreview = v }
+    fun setFishAutoTag(v: Boolean) = updateAi { it.fishAutoTag = v }
+    fun setFishHumanize(v: Boolean) = updateAi { it.fishHumanize = v }
+    fun setLlmEndpoint(v: String) = updateAi { it.llmEndpoint = v }
+    fun setLlmApiKey(v: String) = updateAi { it.llmApiKey = v }
+    fun setLlmModel(v: String) = updateAi { it.llmModel = v }
+    fun setFishVoices(v: String) = updateAi { it.fishVoices = v }
 
     // ---- 参考音频（voiceclone）----
     private val _sampleError = MutableStateFlow<String?>(null)

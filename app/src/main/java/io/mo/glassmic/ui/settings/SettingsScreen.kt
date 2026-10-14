@@ -527,6 +527,7 @@ internal fun <T> DropdownPickerRow(
 internal fun providerLabel(p: TtsProvider): String = when (p) {
     TtsProvider.GEMINI -> "Gemini"
     TtsProvider.MIMO -> "MiMo"
+    TtsProvider.FISH -> "Fish Audio"
     else -> "OpenAI"
 }
 

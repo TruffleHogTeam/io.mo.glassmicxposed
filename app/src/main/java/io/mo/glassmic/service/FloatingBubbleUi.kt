@@ -166,6 +166,12 @@ fun FloatingBubbleRoot(
     panelWidthDp: Int = 0,
     panelHeightDp: Int = 0,
     onResizePanel: (widthDp: Int, heightDp: Int) -> Unit = { _, _ -> },
+    fishMode: Boolean = false,
+    fishVoices: List<Pair<String, String>> = emptyList(),
+    fishVoiceId: String = "",
+    onSelectFishVoice: (String) -> Unit = {},
+    fishEnhance: Boolean = false,
+    onToggleFishEnhance: (Boolean) -> Unit = {},
 ) {
     // 面板尺寸：拖动中实时变化，松手后经 onResizePanel 存进配置。
     // 对象只创建一次——拖动手势在 pointerInput(Unit) 里常驻，若配置一变就换新对象，
@@ -301,7 +307,13 @@ fun FloatingBubbleRoot(
                             durationMs = durationMs,
                             onSeek = onSeekTts,
                             delayRemainingMs = ttsDelayRemainingMs,
-                            onCancelDelayed = onCancelDelayedTts
+                            onCancelDelayed = onCancelDelayedTts,
+                            fishMode = fishMode,
+                            fishVoices = fishVoices,
+                            fishVoiceId = fishVoiceId,
+                            onSelectFishVoice = onSelectFishVoice,
+                            fishEnhance = fishEnhance,
+                            onToggleFishEnhance = onToggleFishEnhance
                         )
                     }
                 }
@@ -898,6 +910,12 @@ private fun TtsTab(
     onSeek: (Float) -> Unit,
     delayRemainingMs: Long,
     onCancelDelayed: () -> Unit,
+    fishMode: Boolean = false,
+    fishVoices: List<Pair<String, String>> = emptyList(),
+    fishVoiceId: String = "",
+    onSelectFishVoice: (String) -> Unit = {},
+    fishEnhance: Boolean = false,
+    onToggleFishEnhance: (Boolean) -> Unit = {},
 ) {
     val t = glass
     val counting = delayRemainingMs > 0
@@ -909,6 +927,17 @@ private fun TtsTab(
         minLines = 3,
         placeholder = stringResource(R.string.float_tts_input_hint)
     )
+
+    // Fish Audio：音色预设切换 + 「优化文本」（自动标签）开关；关闭则按原文直接合成
+    if (fishMode) {
+        FishOptions(
+            voices = fishVoices,
+            selectedId = fishVoiceId,
+            onSelectVoice = onSelectFishVoice,
+            enhance = fishEnhance,
+            onToggleEnhance = onToggleFishEnhance
+        )
+    }
 
     // 状态行：推流指示 + 耳返监听
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -996,6 +1025,52 @@ private fun TtsTab(
             }
         }
     }
+}
+
+/** 音色预设按钮（未配置预设时不显示）；当前音色不在预设里时多一个选中的「自定义」。 */
+@Composable
+private fun FishOptions(
+    voices: List<Pair<String, String>>,
+    selectedId: String,
+    onSelectVoice: (String) -> Unit,
+    enhance: Boolean,
+    onToggleEnhance: (Boolean) -> Unit,
+) {
+    val t = glass
+    if (voices.isNotEmpty()) {
+        val custom = selectedId.isNotBlank() && voices.none { it.second == selectedId }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.float_tts_voice), fontSize = 12.sp, color = t.ink3)
+            Spacer(Modifier.width(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(voices, key = { it.second }) { (label, id) ->
+                    VoiceChip(label, selected = id == selectedId) { onSelectVoice(id) }
+                }
+                if (custom) item { VoiceChip(stringResource(R.string.float_tts_voice_custom), selected = true) {} }
+            }
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.float_tts_enhance), fontSize = 13.sp, modifier = Modifier.weight(1f))
+        GlassToggle(enhance, onToggleEnhance)
+    }
+}
+
+@Composable
+private fun VoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val t = glass
+    Text(
+        label,
+        fontSize = 12.sp,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        color = if (selected) t.primaryInk else t.ink2,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) t.primarySoft else t.fill)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+    )
 }
 
 @Composable
