@@ -15,6 +15,12 @@ object XposedHookGate {
     fun tryMarkAudioHookInstalled(): Boolean =
         audioHookInstalled.compareAndSet(false, true)
 
+    private val mediaRecorderHookInstalled = AtomicBoolean(false)
+
+    /** 同上，MediaRecorder hook 单独计一份，避免与 AudioRecord hook 的去重互相影响。 */
+    fun tryMarkMediaRecorderHookInstalled(): Boolean =
+        mediaRecorderHookInstalled.compareAndSet(false, true)
+
     /** 任意 Xposed 入口都应该在装 hook 前调一次。返回 true 表示该跳过此包。 */
     fun shouldSkipPackage(pkg: String?): Boolean {
         if (pkg.isNullOrBlank()) return true
