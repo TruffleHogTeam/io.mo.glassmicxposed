@@ -9,3 +9,5 @@
 -keep class io.mo.glassmic.xposed.LegacyAudioRecordHook { *; }
 -keep class io.mo.glassmic.xposed.XposedHookGate { *; }
 -dontwarn de.robv.android.xposed.**
+-keep class io.mo.glassmic.xposed.MediaRecorderHook { *; }
+-keep class io.mo.glassmic.xposed.MediaRecorderInterceptor { *; }
