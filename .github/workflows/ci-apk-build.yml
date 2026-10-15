@@ -28,7 +28,16 @@ jobs:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager "platforms;android-35" "platforms;android-36" "build-tools;36.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
-      - run: bash ./gradlew :app:assembleRelease --no-daemon --console=plain
+      - run: bash ./gradlew :app:compileDebugKotlin :xposed:compileDebugKotlin :app:assembleRelease --no-daemon --console=plain
+      - name: Audio regression tests
+        run: |
+          set -euo pipefail
+          stdlib=$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib" -name 'kotlin-stdlib-*.jar' ! -name '*sources*' ! -name '*javadoc*' | sort -V | tail -1)
+          mkdir -p build/audio-regression
+          classpath="app/build/tmp/kotlin-classes/debug:xposed/build/tmp/kotlin-classes/debug:$stdlib:build/audio-regression"
+          javac -encoding UTF-8 -cp "$classpath" -d build/audio-regression tests/audio/AudioRegression.java tests/audio/TapTimingRegression.java
+          java -cp "$classpath" AudioRegression
+          java -cp "$classpath" TapTimingRegression
       - name: Sign with the fixed test key
         env:
           KS_B64: ${{ secrets.TEST_KEYSTORE_BASE64 }}
