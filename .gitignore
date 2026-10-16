@@ -12,6 +12,7 @@ local.properties
 captures/
 app/debug/
 diag-*/
+docs/
 
 # OS
 .DS_Store
