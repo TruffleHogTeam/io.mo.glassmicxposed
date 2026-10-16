@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.mo.glassmic.R
+import io.mo.glassmic.audio.tts.TtsProgress
 import io.mo.glassmic.proto.PlaybackPolicy
 import io.mo.glassmic.ui.common.Dot
 import io.mo.glassmic.ui.common.GlassTextField
@@ -166,6 +167,14 @@ fun FloatingBubbleRoot(
     panelWidthDp: Int = 0,
     panelHeightDp: Int = 0,
     onResizePanel: (widthDp: Int, heightDp: Int) -> Unit = { _, _ -> },
+    fishMode: Boolean = false,
+    fishVoices: List<Pair<String, String>> = emptyList(),
+    fishVoiceId: String = "",
+    onSelectFishVoice: (String) -> Unit = {},
+    fishEnhance: Boolean = false,
+    onToggleFishEnhance: (Boolean) -> Unit = {},
+    ttsProgressLines: List<String> = emptyList(),
+    ttsEnhanced: TtsProgress.Enhanced? = null,
 ) {
     // 面板尺寸：拖动中实时变化，松手后经 onResizePanel 存进配置。
     // 对象只创建一次——拖动手势在 pointerInput(Unit) 里常驻，若配置一变就换新对象，
@@ -201,6 +210,12 @@ fun FloatingBubbleRoot(
     val miniContent: @Composable BoxScope.(Dp) -> Unit = { side -> MiniPlayButton(miniEnabled, miniPlaying, side) }
     // TTS 草稿提到这一层：切 tab 会重建下方内容，草稿放在 TtsTab 内部会被清空。
     var ttsDraft by remember { mutableStateOf("") }
+    // 自动标签完成后把带标签的文本回填到输入框（仅当输入框仍是送去优化的那段原文），
+    // 用户能看到加了哪些标签，再次生成时也会跳过 LLM 直接合成
+    LaunchedEffect(ttsEnhanced) {
+        val e = ttsEnhanced ?: return@LaunchedEffect
+        if (ttsDraft.trim() == e.original.trim()) ttsDraft = e.tagged
+    }
     // 音频库当前查看的分组，同理提到这一层；默认跟随当前音源所在分组。
     var browsingGroupId by remember { mutableStateOf<String?>(null) }
 
@@ -301,7 +316,14 @@ fun FloatingBubbleRoot(
                             durationMs = durationMs,
                             onSeek = onSeekTts,
                             delayRemainingMs = ttsDelayRemainingMs,
-                            onCancelDelayed = onCancelDelayedTts
+                            onCancelDelayed = onCancelDelayedTts,
+                            fishMode = fishMode,
+                            fishVoices = fishVoices,
+                            fishVoiceId = fishVoiceId,
+                            onSelectFishVoice = onSelectFishVoice,
+                            fishEnhance = fishEnhance,
+                            onToggleFishEnhance = onToggleFishEnhance,
+                            progressLines = ttsProgressLines
                         )
                     }
                 }
@@ -898,6 +920,13 @@ private fun TtsTab(
     onSeek: (Float) -> Unit,
     delayRemainingMs: Long,
     onCancelDelayed: () -> Unit,
+    fishMode: Boolean = false,
+    fishVoices: List<Pair<String, String>> = emptyList(),
+    fishVoiceId: String = "",
+    onSelectFishVoice: (String) -> Unit = {},
+    fishEnhance: Boolean = false,
+    onToggleFishEnhance: (Boolean) -> Unit = {},
+    progressLines: List<String> = emptyList(),
 ) {
     val t = glass
     val counting = delayRemainingMs > 0
@@ -909,6 +938,17 @@ private fun TtsTab(
         minLines = 3,
         placeholder = stringResource(R.string.float_tts_input_hint)
     )
+
+    // Fish Audio：音色预设切换 + 「优化文本」（自动标签）开关；关闭则按原文直接合成
+    if (fishMode) {
+        FishOptions(
+            voices = fishVoices,
+            selectedId = fishVoiceId,
+            onSelectVoice = onSelectFishVoice,
+            enhance = fishEnhance,
+            onToggleEnhance = onToggleFishEnhance
+        )
+    }
 
     // 状态行：推流指示 + 耳返监听
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -924,6 +964,23 @@ private fun TtsTab(
             color = if (isStreaming) t.err else t.ink3,
             modifier = Modifier.weight(1f)
         )
+        if (text.isNotEmpty()) {
+            Box(
+                Modifier
+                    .height(30.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(t.fill)
+                    .clickable { onTextChange("") }
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    stringResource(R.string.float_tts_clear),
+                    fontSize = 12.sp, fontWeight = FontWeight.Medium, color = t.ink2
+                )
+            }
+            Spacer(Modifier.width(6.dp))
+        }
         Box(
             Modifier
                 .height(30.dp)
@@ -978,6 +1035,11 @@ private fun TtsTab(
         Text(stringResource(R.string.float_tts_generate_failed), fontSize = 12.sp, color = t.err)
     }
 
+    // 生成过程：LLM 优化 / 请求合成 / 耗时 / 错误，逐行显示
+    if (progressLines.isNotEmpty() && (generating || ready || failed)) {
+        GenerateLog(progressLines, generating)
+    }
+
     // 进度条：开启后，生成就绪或正在播放时显示
     if (progressBarEnabled && (ready || ttsActive)) {
         val hasDuration = durationMs > 0
@@ -996,6 +1058,79 @@ private fun TtsTab(
             }
         }
     }
+}
+
+/** 生成日志：等宽小字，最后一行在生成中高亮。 */
+@Composable
+private fun GenerateLog(lines: List<String>, generating: Boolean) {
+    val t = glass
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(t.fill)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        lines.forEachIndexed { i, line ->
+            val current = generating && i == lines.lastIndex
+            Text(
+                line,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                fontFamily = MonoFamily,
+                color = if (current) t.ink else t.ink3,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/** 音色预设按钮（未配置预设时不显示）；当前音色不在预设里时多一个选中的「自定义」。 */
+@Composable
+private fun FishOptions(
+    voices: List<Pair<String, String>>,
+    selectedId: String,
+    onSelectVoice: (String) -> Unit,
+    enhance: Boolean,
+    onToggleEnhance: (Boolean) -> Unit,
+) {
+    val t = glass
+    if (voices.isNotEmpty()) {
+        val custom = selectedId.isNotBlank() && voices.none { it.second == selectedId }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.float_tts_voice), fontSize = 12.sp, color = t.ink3)
+            Spacer(Modifier.width(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(voices, key = { it.second }) { (label, id) ->
+                    VoiceChip(label, selected = id == selectedId) { onSelectVoice(id) }
+                }
+                if (custom) item { VoiceChip(stringResource(R.string.float_tts_voice_custom), selected = true) {} }
+            }
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.float_tts_enhance), fontSize = 13.sp, modifier = Modifier.weight(1f))
+        GlassToggle(enhance, onToggleEnhance)
+    }
+}
+
+@Composable
+private fun VoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val t = glass
+    Text(
+        label,
+        fontSize = 12.sp,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        color = if (selected) t.primaryInk else t.ink2,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) t.primarySoft else t.fill)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+    )
 }
 
 @Composable

@@ -117,7 +117,8 @@ fun AiTtsSettingsScreen(
                         listOf(
                             Triple(TtsProvider.OPENAI, "OpenAI", "/audio/speech"),
                             Triple(TtsProvider.GEMINI, "Google Gemini", "generateContent"),
-                            Triple(TtsProvider.MIMO, stringResource(R.string.ai_tts_provider_mimo_name), "chat/completions")
+                            Triple(TtsProvider.MIMO, stringResource(R.string.ai_tts_provider_mimo_name), "chat/completions"),
+                            Triple(TtsProvider.FISH, "Fish Audio", "/v1/tts")
                         ).forEach { (p, name, api) ->
                             ProtocolCard(name, api, selected = provider == p) { vm.setProvider(p) }
                         }
@@ -167,6 +168,48 @@ fun AiTtsSettingsScreen(
                                     Spacer(Modifier.width(6.dp))
                                 }
                                 SoftButton(stringResource(R.string.ai_tts_choose_audio), { sampleLauncher.launch(arrayOf("audio/*")) }, height = 32.dp)
+                            }
+                        }
+                    }
+                }
+
+                if (provider == TtsProvider.FISH) {
+                    item {
+                        Section(stringResource(R.string.ai_tts_section_fish)) {
+                            Text(
+                                stringResource(R.string.ai_tts_fish_hint),
+                                fontSize = 12.sp, lineHeight = 17.sp, color = t.ink3,
+                                modifier = Modifier.padding(vertical = 10.dp)
+                            )
+                            TextFieldRow(stringResource(R.string.ai_tts_fish_voices), ai.fishVoices, stringResource(R.string.ai_tts_fish_voices_placeholder), vm::setFishVoices, mono = false)
+                            Text(
+                                stringResource(R.string.ai_tts_fish_voices_hint),
+                                fontSize = 12.sp, lineHeight = 17.sp, color = t.ink3,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                            val fishVoiceResults by vm.fishVoiceResults.collectAsState()
+                            FishVoicePicker(
+                                state = fishVoiceResults,
+                                onFetch = vm::fetchFishVoices,
+                                onPick = vm::pickFishVoice,
+                                onDismiss = vm::dismissFishVoices
+                            )
+                            SwitchRow(
+                                label = stringResource(R.string.ai_tts_fish_auto_tag),
+                                hint = stringResource(R.string.ai_tts_fish_auto_tag_hint),
+                                checked = ai.fishAutoTag,
+                                onChange = vm::setFishAutoTag
+                            )
+                            if (ai.fishAutoTag) {
+                                SwitchRow(
+                                    label = stringResource(R.string.ai_tts_fish_humanize),
+                                    hint = stringResource(R.string.ai_tts_fish_humanize_hint),
+                                    checked = ai.fishHumanize,
+                                    onChange = vm::setFishHumanize
+                                )
+                                TextFieldRow(stringResource(R.string.ai_tts_llm_endpoint), ai.llmEndpoint, "https://api.deepseek.com/v1", vm::setLlmEndpoint)
+                                TextFieldRow(stringResource(R.string.ai_tts_llm_api_key), ai.llmApiKey, "sk-…", vm::setLlmApiKey)
+                                TextFieldRow(stringResource(R.string.ai_tts_llm_model), ai.llmModel, "deepseek-chat", vm::setLlmModel)
                             }
                         }
                     }
@@ -272,6 +315,52 @@ private fun ProtocolCard(name: String, api: String, selected: Boolean, onClick: 
 private fun TextFieldRow(label: String, initial: String, placeholder: String?, onCommit: (String) -> Unit, mono: Boolean = true) {
     var value by remember(initial) { mutableStateOf(initial) }
     LabeledField(label, value, { value = it; onCommit(it) }, placeholder, mono)
+}
+
+/** 获取 Fish 声音：搜索框留空 = 我的声音，否则按名称搜索；下拉中选一个即设为当前音色并加入预设。 */
+@Composable
+private fun FishVoicePicker(
+    state: FishVoicesState,
+    onFetch: (String) -> Unit,
+    onPick: (String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val t = glass
+    var query by remember { mutableStateOf("") }
+    val loading = state is FishVoicesState.Loading
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
+        GlassTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier.weight(1f),
+            placeholder = stringResource(R.string.ai_tts_fish_voice_search_hint)
+        )
+        Spacer(Modifier.width(10.dp))
+        Box {
+            SoftButton(
+                when {
+                    loading -> stringResource(R.string.ai_tts_fish_fetching)
+                    query.isBlank() -> stringResource(R.string.ai_tts_fish_my_voices)
+                    else -> stringResource(R.string.ai_tts_fish_search)
+                },
+                onClick = { onFetch(query) },
+                enabled = !loading
+            )
+            DropdownMenu(
+                expanded = state is FishVoicesState.Loaded,
+                onDismissRequest = onDismiss,
+                shape = RoundedCornerShape(18.dp),
+                containerColor = t.sheet
+            ) {
+                (state as? FishVoicesState.Loaded)?.voices?.forEach { (name, id) ->
+                    DropdownMenuItem(text = { Text(name, fontSize = 14.sp) }, onClick = { onPick(name, id) })
+                }
+            }
+        }
+    }
+    if (state is FishVoicesState.Error) {
+        Text(state.message, fontSize = 12.sp, lineHeight = 17.sp, color = t.err, modifier = Modifier.padding(bottom = 6.dp))
+    }
 }
 
 @Composable
