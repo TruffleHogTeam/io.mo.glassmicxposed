@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.mo.glassmic.R
+import io.mo.glassmic.audio.tts.TtsProgress
 import io.mo.glassmic.proto.PlaybackPolicy
 import io.mo.glassmic.ui.common.Dot
 import io.mo.glassmic.ui.common.GlassTextField
@@ -173,7 +174,7 @@ fun FloatingBubbleRoot(
     fishEnhance: Boolean = false,
     onToggleFishEnhance: (Boolean) -> Unit = {},
     ttsProgressLines: List<String> = emptyList(),
-    ttsEnhanced: Pair<String, String>? = null,
+    ttsEnhanced: TtsProgress.Enhanced? = null,
 ) {
     // 面板尺寸：拖动中实时变化，松手后经 onResizePanel 存进配置。
     // 对象只创建一次——拖动手势在 pointerInput(Unit) 里常驻，若配置一变就换新对象，
@@ -212,8 +213,8 @@ fun FloatingBubbleRoot(
     // 自动标签完成后把带标签的文本回填到输入框（仅当输入框仍是送去优化的那段原文），
     // 用户能看到加了哪些标签，再次生成时也会跳过 LLM 直接合成
     LaunchedEffect(ttsEnhanced) {
-        val (original, tagged) = ttsEnhanced ?: return@LaunchedEffect
-        if (ttsDraft.trim() == original.trim()) ttsDraft = tagged
+        val e = ttsEnhanced ?: return@LaunchedEffect
+        if (ttsDraft.trim() == e.original.trim()) ttsDraft = e.tagged
     }
     // 音频库当前查看的分组，同理提到这一层；默认跟随当前音源所在分组。
     var browsingGroupId by remember { mutableStateOf<String?>(null) }

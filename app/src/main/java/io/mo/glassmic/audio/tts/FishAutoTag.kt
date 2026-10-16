@@ -61,9 +61,13 @@ internal object FishAutoTag {
         }
     }
 
-    /** 去掉 Fish 会照读的内容：emoji、*动作*、多余空白。 */
-    fun stripUnspeakable(text: String): String =
-        text.replace(actionRegex, "").replace(emojiRegex, "").replace(spacesRegex, " ").trim()
+    /**
+     * 去掉 Fish 会照读的内容：emoji、多余空白，[actions] 为 true 时连同 *动作* 一起去掉。
+     * 未开自动标签时传 false：用户原文里的 *…* 可能是算式（2*3*4）等正文。
+     */
+    fun stripUnspeakable(text: String, actions: Boolean = true): String =
+        (if (actions) text.replace(actionRegex, "") else text)
+            .replace(emojiRegex, "").replace(spacesRegex, " ").trim()
 
     /**
      * 只保留 Fish 内置标签（统一写成小写 [tag]），其余 [xxx] 删除；

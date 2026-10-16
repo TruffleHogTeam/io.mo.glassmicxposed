@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -14,8 +15,11 @@ import javax.inject.Singleton
 @Singleton
 class TtsProgress @Inject constructor() {
 
-    /** 自动标签结果：[original] 为用户输入，[tagged] 为实际送去合成的文本。 */
-    data class Enhanced(val original: String, val tagged: String)
+    /**
+     * 自动标签结果：[original] 为用户输入，[tagged] 为实际送去合成的文本。
+     * [seq] 每次递增：同一段文本再次优化出相同结果时 StateFlow 也会重新发出，悬浮窗才会再次回填。
+     */
+    data class Enhanced(val original: String, val tagged: String, val seq: Long)
 
     private val _lines = MutableStateFlow<List<String>>(emptyList())
     val lines: StateFlow<List<String>> = _lines.asStateFlow()
@@ -24,6 +28,7 @@ class TtsProgress @Inject constructor() {
     val enhanced: StateFlow<Enhanced?> = _enhanced.asStateFlow()
 
     @Volatile private var startMs = 0L
+    private val enhancedSeq = AtomicLong()
 
     fun start() {
         startMs = System.currentTimeMillis()
@@ -37,7 +42,7 @@ class TtsProgress @Inject constructor() {
     }
 
     fun publishEnhanced(original: String, tagged: String) {
-        _enhanced.value = Enhanced(original, tagged)
+        _enhanced.value = Enhanced(original, tagged, enhancedSeq.incrementAndGet())
     }
 
     private companion object {

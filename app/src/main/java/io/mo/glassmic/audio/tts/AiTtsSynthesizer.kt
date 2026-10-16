@@ -9,10 +9,14 @@ import io.mo.glassmic.data.config.ConfigStore
 import io.mo.glassmic.log.GlassLog
 import io.mo.glassmic.proto.TtsAiConfig
 import io.mo.glassmic.proto.TtsProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -69,6 +73,8 @@ class AiTtsSynthesizer @Inject constructor(
                     else -> openAi(ai, request, sink) // OPENAI 及默认
                 }
             }.onFailure {
+                // 被取消（超时 / 重新生成）：调用方已不再等结果，不再写进度也不回调
+                if (it is CancellationException || !isActive) return@onFailure
                 GlassLog.b("Tts") { "AI TTS 失败(${ai.provider}): ${it.message}" }
                 progress.step(str(R.string.tts_step_failed, it.message.orEmpty()))
                 sink.onError("AI TTS 失败: ${it.message}")
@@ -244,13 +250,14 @@ class AiTtsSynthesizer @Inject constructor(
     }
 
     // ============ Fish Audio /v1/tts ============
-    private fun fish(ai: TtsAiConfig, req: TtsRequest, sink: PcmSink) {
+    private suspend fun fish(ai: TtsAiConfig, req: TtsRequest, sink: PcmSink) {
         val sampleRate = if (ai.sampleRate > 0) ai.sampleRate else 44_100
         val text = when {
-            !ai.fishAutoTag -> FishAutoTag.stripUnspeakable(req.text).ifBlank { req.text }
+            // 未开自动标签：只去 emoji，*…* 原样保留（可能是算式等正文，不当动作删）
+            !ai.fishAutoTag -> FishAutoTag.stripUnspeakable(req.text, actions = false).ifBlank { req.text }
             // 文本里已有 Fish 标签（通常是上次优化后回填到输入框的结果）→ 直接合成，省掉一次 LLM 往返
             FishAutoTag.hasFishTags(req.text) -> {
-                progress.step(str(R.string.tts_step_already_tagged))
+                step(str(R.string.tts_step_already_tagged))
                 FishAutoTag.keepFishTags(FishAutoTag.singleLine(req.text))
             }
             else -> fishAutoTag(ai, req.text)
@@ -274,17 +281,18 @@ class AiTtsSynthesizer @Inject constructor(
             "model" to model
         )
         val payload = body.toString().toByteArray(Charsets.UTF_8)
-        progress.step(str(R.string.tts_step_fish_request, model))
+        step(str(R.string.tts_step_fish_request, model))
         val t0 = System.currentTimeMillis()
         val audio = try {
             httpPost("${fishBase(ai)}/v1/tts", headers, payload)
         } catch (e: java.io.IOException) {
-            // 网络抖动（如 connection abort）重试一次；HTTP 错误码不重试
-            progress.step(str(R.string.tts_step_retry, e.message ?: e.javaClass.simpleName))
+            // 网络抖动（如 connection abort）重试一次；HTTP 错误码不重试。
+            // step 先检查取消：超时 / 重新生成后不再重发，免得白耗额度
+            step(str(R.string.tts_step_retry, e.message ?: e.javaClass.simpleName))
             httpPost("${fishBase(ai)}/v1/tts", headers, payload)
         }
         if (audio.isEmpty()) error(str(R.string.tts_step_fish_empty))
-        progress.step(str(R.string.tts_step_fish_done, seconds(t0), audio.size / 2.0 / sampleRate))
+        step(str(R.string.tts_step_fish_done, seconds(t0), audio.size / 2.0 / sampleRate))
         decodeAudio("pcm", sampleRate, audio, sink)
     }
 
@@ -319,15 +327,15 @@ class AiTtsSynthesizer @Inject constructor(
      * 用 OpenAI 兼容 LLM 给文本插入 Fish 内置标签。
      * 未配置 key 或调用失败时退回原文（去掉 emoji / *动作*），不影响合成。
      */
-    private fun fishAutoTag(ai: TtsAiConfig, input: String): String {
+    private suspend fun fishAutoTag(ai: TtsAiConfig, input: String): String {
         val fallback = FishAutoTag.stripUnspeakable(input).ifBlank { input }
         if (ai.llmApiKey.isBlank()) {
             GlassLog.b("Tts") { "Fish 自动标签：未填写 LLM API Key，跳过" }
-            progress.step(str(R.string.tts_step_llm_no_key))
+            step(str(R.string.tts_step_llm_no_key))
             return fallback
         }
         val model = ai.llmModel.ifBlank { "deepseek-chat" }
-        progress.step(str(R.string.tts_step_llm_request, model))
+        step(str(R.string.tts_step_llm_request, model))
         val t0 = System.currentTimeMillis()
         return runCatching {
             val base = ai.llmEndpoint.ifBlank { "https://api.deepseek.com/v1" }.trimEnd('/')
@@ -354,18 +362,29 @@ class AiTtsSynthesizer @Inject constructor(
                 ?.optString("content").orEmpty().trim().trim('"')
             val tagged = FishAutoTag.keepFishTags(FishAutoTag.stripUnspeakable(FishAutoTag.singleLine(content)))
             if (FishAutoTag.hasSpeakableText(tagged)) {
-                progress.step(str(R.string.tts_step_llm_done, seconds(t0)))
+                step(str(R.string.tts_step_llm_done, seconds(t0)))
                 progress.publishEnhanced(input, tagged)
                 tagged
             } else {
-                progress.step(str(R.string.tts_step_llm_unusable))
+                step(str(R.string.tts_step_llm_unusable))
                 fallback
             }
         }.getOrElse {
+            // 取消不算 LLM 失败：不能退回原文接着去请求 Fish
+            if (it is CancellationException) throw it
             GlassLog.b("Tts") { "Fish 自动标签失败，使用原文: ${it.message}" }
-            progress.step(str(R.string.tts_step_llm_failed, it.message.orEmpty()))
+            step(str(R.string.tts_step_llm_failed, it.message.orEmpty()))
             fallback
-        }.also { GlassLog.b("Tts") { "Fish 文本: $it" } }
+        }.also { GlassLog.b("Tts") { "Fish 文本: ${it.take(20)}" } }
+    }
+
+    /**
+     * 写一行生成进度。先检查本次合成是否已被取消：HTTP 是阻塞调用，取消后请求仍会跑完，
+     * 不检查的话旧任务会在「已超时」后继续写日志、甚至发起重试。
+     */
+    private suspend fun step(message: String) {
+        currentCoroutineContext().ensureActive()
+        progress.step(message)
     }
 
     private fun str(resId: Int, vararg args: Any): String = AppLocale.string(context, resId, *args)

@@ -322,7 +322,7 @@ class FloatingWindowService : LifecycleService() {
                     fishEnhance = cfg.tts.ai.fishAutoTag,
                     onToggleFishEnhance = { on -> updateFishAi { it.fishAutoTag = on } },
                     ttsProgressLines = ttsProgressLines,
-                    ttsEnhanced = ttsEnhanced?.let { it.original to it.tagged },
+                    ttsEnhanced = ttsEnhanced,
                 )
             }
         }
