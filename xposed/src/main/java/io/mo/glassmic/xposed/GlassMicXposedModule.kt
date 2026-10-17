@@ -134,6 +134,9 @@ class GlassMicXposedModule : XposedModule() {
                     // 之前每个 App 启动都 ping 一次 RuntimeProvider，是「被杀又秒复活」的主要来源之一。
                     // 「模块已激活」的诊断状态改由 RuntimeProvider.query 在真正被查询时更新。
                     AudioRecordHook.install(this@GlassMicXposedModule, ctx, pkg)
+                    // MediaRecorder 服务端采集缺口：拦截纯音频 MediaRecorder，接管为应用内
+                    // AudioRecord(已 Hook)+MediaCodec+MediaMuxer，覆盖聊天语音类路径。
+                    MediaRecorderHook.install(this@GlassMicXposedModule, ctx, pkg)
                     val nativeOk = NativeAAudioHook.install(ctx, pkg)
                     log(Log.INFO, TAG, "hooks installed in $pkg native=$nativeOk")
                 }.onFailure {
