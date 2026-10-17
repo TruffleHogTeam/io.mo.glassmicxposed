@@ -11,9 +11,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object XposedHookGate {
     private val audioHookInstalled = AtomicBoolean(false)
+    private val mediaRecorderHookInstalled = AtomicBoolean(false)
 
     fun tryMarkAudioHookInstalled(): Boolean =
         audioHookInstalled.compareAndSet(false, true)
+
+    /** 与 [tryMarkAudioHookInstalled] 同理，去重 API 101 / legacy 双入口的 MediaRecorder hook。 */
+    fun tryMarkMediaRecorderHookInstalled(): Boolean =
+        mediaRecorderHookInstalled.compareAndSet(false, true)
 
     /** 任意 Xposed 入口都应该在装 hook 前调一次。返回 true 表示该跳过此包。 */
     fun shouldSkipPackage(pkg: String?): Boolean {
