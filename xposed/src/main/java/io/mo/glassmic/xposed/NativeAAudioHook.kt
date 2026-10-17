@@ -78,19 +78,31 @@ object NativeAAudioHook {
         }
 
         // 3. 安装 hook
-        val rc = runCatching { nativeInstall() }
+        // 返回值是逐路径位掩码；任一路径装上就要启动轮询，否则它拿不到决策和 PCM。
+        val mask = runCatching { nativeInstall() }
             .onFailure { android.util.Log.e(TAG, "nativeInstall throw: ${it.message}", it) }
-            .getOrDefault(-1)
-        if (rc != 0) {
+            .getOrDefault(0)
+        val aaudioOk = mask and 1 != 0
+        val openslOk = mask and 2 != 0
+        val audioRecordOk = mask and 4 != 0
+        val detail = "aaudio=$aaudioOk opensl=$openslOk audiorecord=$audioRecordOk"
+        if (mask and 7 == 0) {
+            android.util.Log.e(TAG, "no native hook installed in $callerPackage")
+            XBridge.reportDiagnosticEvent(
+                ctx,
+                callerPackage,
+                "native_hooks_failed",
+                Bundle().apply { putString("detail", detail) }
+            )
             installed.set(false)
             return false
         }
-        android.util.Log.i(TAG, "AAudio native hook installed in $callerPackage")
+        android.util.Log.i(TAG, "native hooks installed in $callerPackage: $detail")
         XBridge.reportDiagnosticEvent(
             ctx,
             callerPackage,
             "native_hooks_installed",
-            Bundle().apply { putString("detail", "AAudio/OpenSL/AudioRecord hook install completed") }
+            Bundle().apply { putString("detail", detail) }
         )
 
         // 4. 启动轮询线程

@@ -11,15 +11,14 @@ import io.mo.glassmic.core.Constants
 /**
  * libxposed API 101 入口。
  *
- * 关键设计：**zygote 级 hook**。
+ * LSPosed 在应用 fork **之后**按进程加载框架和模块，只有 LSPosed 作用域内的进程才会
+ * 回调 [onModuleLoaded]；并不存在“勾选 android/system 就从父 zygote 继承到所有 App”的路径。
+ * 因此目标 App 必须出现在 LSPosed 作用域中（作用域页勾选时会经 libxposed:service 自动申请），
+ * 并在授权后完全重启该 App。
  *
- * 我们在 [onModuleLoaded] 阶段（zygote 进程）就 hook 住 `Application.attach`。
- * zygote 之后 fork 出来的每一个 App 进程会通过 COW 内存继承这个 hook——
- * 因此即使用户没在 LSPosed 管理器里勾选某个 App，只要勾选了「android」（= zygote），
- * 那个 App 启动时也会跑我们的 hook 回调，从而装上 AudioRecord 和 AAudio 拦截。
- *
- * 代价：一个 hook bug 会让所有 App 一起出问题。所以下面有一份"保护进程"列表，
- * 关键系统进程（systemui、launcher、settings、GMS 等）直接跳过，绝不动它们。
+ * 进程内我们在 [onModuleLoaded] 时 hook `Application.attach`，在拿到 App Context 后
+ * 装上 AudioRecord 与 native（AAudio/OpenSL/AudioRecord::read）拦截。
+ * 关键系统进程（systemui、launcher、GMS、输入法等）即使被勾进作用域也直接跳过。
  */
 class GlassMicXposedModule : XposedModule() {
 
@@ -36,8 +35,7 @@ class GlassMicXposedModule : XposedModule() {
             TAG,
             "module loaded process=${param.processName} system=${param.isSystemServer} api=$apiVersion framework=$frameworkName/$frameworkVersion"
         )
-        // zygote 阶段安装 Application.attach hook——所有 fork 出来的 App 自动继承
-        // 即使在 non-zygote 进程里调用，hook 也是 method 级的，全局生效
+        // 当前进程已在作用域内：hook Application.attach，等 App Context 就绪再装音频 hook
         installApplicationAttachHook()
     }
 
@@ -95,7 +93,7 @@ class GlassMicXposedModule : XposedModule() {
     }
 
     override fun onPackageReady(param: XposedModuleInterface.PackageReadyParam) {
-        // 现在用 zygote 继承路径，per-package 回调只用来记日志
+        // 音频 hook 由 Application.attach 安装，per-package 回调只用来记日志
         val pkg = param.packageName ?: return
         if (pkg == SELF_PKG) return
         log(Log.INFO, TAG, "onPackageReady $pkg firstPackage=${param.isFirstPackage}")
@@ -141,6 +139,6 @@ class GlassMicXposedModule : XposedModule() {
                 }
                 result
             }
-        log(Log.INFO, TAG, "Application.attach hook installed (zygote-level)")
+        log(Log.INFO, TAG, "Application.attach hook installed")
     }
 }

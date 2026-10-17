@@ -15,14 +15,14 @@ extern "C" {
 
 JNIEXPORT jint JNICALL
 Java_io_mo_glassmic_xposed_NativeAAudioHook_nativeInstall(JNIEnv* env, jclass) {
-    // AAudio 是主路径——失败才算装载失败。OpenSL ES 作为补充路径，失败不致命
-    // （例如某些机型/进程未用到 OpenSL 录音）。
+    // 逐路径返回安装结果位掩码：bit0=AAudio、bit1=OpenSL ES、bit2=AudioRecord::read。
+    // 三条路径共用决策和 PCM 状态，任意一条装上都需要 Kotlin 侧启动轮询。
     bool aaudio_ok = install_aaudio_hook();
     bool opensl_ok = install_opensl_hook();
     bool arecord_ok = install_audiorecord_hook();
     LOGI("native hooks installed: aaudio=%d opensl=%d audiorecord=%d",
          aaudio_ok, opensl_ok, arecord_ok);
-    return aaudio_ok ? 0 : -1;
+    return (aaudio_ok ? 1 : 0) | (opensl_ok ? 2 : 0) | (arecord_ok ? 4 : 0);
 }
 
 JNIEXPORT void JNICALL

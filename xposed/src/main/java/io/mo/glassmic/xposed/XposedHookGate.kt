@@ -6,8 +6,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * 防止同一个进程里 API 101 与 legacy API 82 双入口同时生效时重复安装 AudioRecord hook。
  *
- * 同时承载"哪些进程绝不安装 audio hook"的共享白名单——zygote 级 hook 会覆盖所有 App，
- * 但系统命脉（systemui / launcher / GMS / 输入法）必须放过，否则一个 bug 就是系统级崩。
+ * 同时承载"哪些进程绝不安装 audio hook"的共享白名单——作用域可能被勾入系统应用，
+ * 系统命脉（systemui / launcher / GMS / 输入法）必须放过，否则一个 bug 就是系统级崩。
  */
 object XposedHookGate {
     private val audioHookInstalled = AtomicBoolean(false)

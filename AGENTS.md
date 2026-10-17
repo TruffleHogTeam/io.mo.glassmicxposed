@@ -42,7 +42,7 @@ Dependency flow: `app` → `core`, `app` → `xposed` → `core`. The `xposed` m
 
 ## Key Architecture Decisions
 
-- **Zygote-level hook**: `GlassMicXposedModule` hooks `Application.attach` at zygote stage so all forked app processes inherit the hook automatically. This means a bug can crash all apps — protected processes (systemui, launcher, GMS, input methods, and GlassMic itself) are blocklisted in `XposedHookGate.kt`.
+- **Per-process hook via LSPosed scope**: LSPosed loads modules into each app process *after* fork, and only for packages in the module's scope — there is no "hook once in zygote, every app inherits it" path (`initZygote` is just a name). `GlassMicXposedModule` / `LegacyXposedEntry` hook `Application.attach` inside each scoped process, then install the Java and native audio hooks. Checking an app on the Scope page requests LSPosed scope via `libxposed:service` (`LsposedServiceManager.requestScope`). Protected processes (systemui, launcher, GMS, input methods, and GlassMic itself) are still blocklisted in `XposedHookGate.kt` in case they get scoped.
 - **PCM pipe via ContentProvider**: `PcmStreamProvider` serves PCM data; `XposedPcmReader` reads it. Per-consumer sample-rate/channel conversion happens on the hook side.
 - **Dual Xposed API**: Both libxposed API 101 and legacy API 82 are supported. `XposedHookGate.tryMarkAudioHookInstalled()` prevents duplicate hook installation when both entry points fire.
 - **Native AAudio hook**: `glass_aaudio.cpp` uses shadowhook (ByteDance) for inline hooking. Links against NDK's `libaaudio.so`.
@@ -60,4 +60,6 @@ Dependency flow: `app` → `core`, `app` → `xposed` → `core`. The `xposed` m
 
 ## LSPosed Scope
 
-When enabling in LSPosed manager: scope should be `android` and `system` (the zygote). This is different from most Xposed modules that target specific apps.
+Default `scope.list` is `system` + `android` (system_server — needed for the package-visibility and volume-key hooks). **Every target app must also be in the LSPosed scope**, and be fully restarted after granting; GlassMic's own whitelist (`ScopeMatcher`) is a second, independent gate.
+
+`MediaRecorder` recording (e.g. Snapchat voice notes) is captured inside the system media service, not the app process, so the LSPosed backend cannot replace it — see `docs/2026-10-17_逆向-Snapchat录音兼容性-report.md`.

@@ -12,11 +12,13 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage
 /**
  * legacy Xposed API 82 入口。
  *
- * 两条路径：
- *  1. [IXposedHookZygoteInit.initZygote] —— zygote 阶段安装 `Application.attach` hook
- *     这是和 API 101 的 onModuleLoaded 等价的"全局覆盖"路径
- *  2. [IXposedHookLoadPackage.handleLoadPackage] —— per-package 兜底
- *     若 zygote hook 因某种原因没生效，至少用户勾选的 App 还能走这条路
+ * 注意：LSPosed 在应用 fork 后才按进程加载模块，`initZygote` 只是方法名，同样只会在
+ * 作用域内的 App 进程里被调用，不能据此认为未勾选的 App 也会继承 hook。
+ *
+ * 两条路径（都在作用域内进程里执行）：
+ *  1. [IXposedHookZygoteInit.initZygote] —— 进程早期安装 `Application.attach` hook，
+ *     与 API 101 的 onModuleLoaded 等价
+ *  2. [IXposedHookLoadPackage.handleLoadPackage] —— 兜底，若 1 没生效再装一次
  *
  * 不论哪条路径，都用 [XposedHookGate.shouldSkipPackage] 跳过系统命脉，避免误杀。
  */
@@ -29,7 +31,7 @@ class LegacyXposedEntry : IXposedHookZygoteInit, IXposedHookLoadPackage {
     }
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
-        // zygote hook 没生效时的兜底
+        // initZygote 路径没生效时的兜底
         if (attachHookInstalled) return
         val pkg = lpparam.packageName
         if (XposedHookGate.shouldSkipPackage(pkg)) return

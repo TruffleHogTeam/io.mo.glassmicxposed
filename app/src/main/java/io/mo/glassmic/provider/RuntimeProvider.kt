@@ -61,7 +61,10 @@ class RuntimeProvider : ContentProvider() {
                 val event = extras.getString("event").orEmpty().take(64)
                 if (event.isBlank()) return null
                 val pkg = extras.getString("package") ?: callingPackage ?: arg ?: "unknown"
-                if (event == "native_hooks_installed") recordPackageState(pkg, "native_hook_installed_ms", now)
+                if (event == "native_hooks_installed" || event == "native_hooks_failed") {
+                    recordPackageState(pkg, "native_hook_installed_ms", now,
+                        extras.getString("detail") ?: if (event == "native_hooks_failed") "none" else null)
+                }
                 if (event == "native_capture_active") recordPackageState(pkg, "last_capture_ms", now)
                 if (event == "provider_access_recovered") {
                     recordPackageState(pkg, "provider_recovered_ms", now,
