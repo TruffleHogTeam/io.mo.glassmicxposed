@@ -14,6 +14,7 @@ import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.WindowInsets
 import android.view.WindowManager
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalDensity
@@ -261,6 +262,19 @@ class FloatingWindowService : LifecycleService() {
                 val ttsEnhanced by ttsProgress.enhanced.collectAsState()
                 val knownVoices by fishVoiceRepo.voices.collectAsState()
                 val voicesRefreshing by fishVoiceRepo.refreshing.collectAsState()
+                val fishCredit by fishVoiceRepo.credit.collectAsState()
+                val fishOn = cfg.tts.ai.enabled && cfg.tts.ai.provider == TtsProvider.FISH
+                // 预设和当前音色里不在「我的声音」中的 ID（手填的、网站收藏的）按 ID 查名称和封面
+                LaunchedEffect(fishOn, cfg.tts.ai.fishVoices, cfg.tts.ai.voice) {
+                    if (fishOn) {
+                        fishVoiceRepo.ensureKnown(
+                            FishVoices.parse(cfg.tts.ai.fishVoices).map { it.second } + cfg.tts.ai.voice
+                        )
+                    }
+                }
+                LaunchedEffect(fishOn, mode) {
+                    if (fishOn && mode == FloatMode.TTS) fishVoiceRepo.refreshCredit()
+                }
 
                 val activeFile = (rt.currentSourceType == SourceType.FILE || rt.currentSourceType == SourceType.TTS) && rt.enabled && !rt.safeMode
                 val currentId = cfg.currentAudioId
@@ -324,7 +338,7 @@ class FloatingWindowService : LifecycleService() {
                     panelHeightDp = cfg.floatingWindow.panelHeightDp,
                     onResizePanel = { w, h -> onResizePanel(w, h) },
                     fishMode = cfg.tts.ai.enabled && cfg.tts.ai.provider == TtsProvider.FISH,
-                    fishVoices = floatVoices(cfg.tts.ai.fishVoices, knownVoices),
+                    fishVoices = floatVoices(cfg.tts.ai.fishVoices, cfg.tts.ai.voice, knownVoices),
                     fishVoiceId = cfg.tts.ai.voice.trim(),
                     onSelectFishVoice = { id -> updateFishAi { it.voice = id } },
                     fishEnhance = cfg.tts.ai.fishAutoTag,
@@ -336,6 +350,14 @@ class FloatingWindowService : LifecycleService() {
                     onRefreshVoices = { force -> fishVoiceRepo.refreshMine(force) },
                     loadVoiceCover = { url -> fishVoiceRepo.cover(url)?.asImageBitmap() },
                     onCopyText = { text -> copyToClipboard(FishAutoTag.plainText(text)) },
+                    fishModel = cfg.tts.ai.model,
+                    onSelectFishModel = { id -> updateFishAi { it.model = id } },
+                    fishCredit = if (fishOn) fishCredit else null,
+                    onSaveTts = { gid -> onSaveTts(gid) },
+                    llmTemperature = cfg.tts.ai.let { if (it.hasLlmTemperature()) it.llmTemperature else -1f },
+                    onSetLlmTemperature = { v ->
+                        updateFishAi { if (v < 0f) { it.clearLlmTemperature() } else { it.llmTemperature = v } }
+                    },
                     ttsProgressLines = ttsProgressLines,
                     ttsEnhanced = ttsEnhanced,
                 )
@@ -378,6 +400,8 @@ class FloatingWindowService : LifecycleService() {
         lifecycleScope.launch {
             val ok = playback.generateTts(text)
             if (!ok) GlassLog.b("Float") { "TTS 生成失败（文本为空或引擎不可用）" }
+            // 生成会消耗 Fish 额度，完成后刷新一次余额
+            fishVoiceRepo.refreshCredit(force = true)
         }
     }
 
@@ -399,12 +423,25 @@ class FloatingWindowService : LifecycleService() {
     }
 
     /** 音色下拉：先列预设（顺序按设置里的写法），再列「我的声音」等已知声音；名字与封面取自已知声音。 */
-    private fun floatVoices(presetsRaw: String, known: List<FishVoice>): List<FloatVoice> {
+    private fun floatVoices(presetsRaw: String, currentId: String, known: List<FishVoice>): List<FloatVoice> {
         val presets = FishVoices.parse(presetsRaw).map { (name, id) ->
             FloatVoice(id, name, known.firstOrNull { it.id == id }?.coverUrl.orEmpty())
         }
-        val rest = known.filter { k -> presets.none { it.id == k.id } }.map { FloatVoice(it.id, it.title, it.coverUrl) }
+        // 「我的声音」+ 按 ID 查到的声音（手填 / 收藏）。手填的 ID 只有是当前音色或在预设里才显示
+        val rest = known
+            .filter { k -> presets.none { it.id == k.id } && (k.mine || k.id == currentId.trim()) }
+            .map { FloatVoice(it.id, it.title, it.coverUrl) }
         return presets + rest
+    }
+
+    private fun onSaveTts(groupId: String?) {
+        lifecycleScope.launch {
+            val name = FishAutoTag.plainText(playback.lastGeneratedText).take(40).ifBlank { "TTS" }
+            val gid = runCatching { playback.saveGeneratedTts(groupId, name) }
+                .onFailure { GlassLog.b("Float") { "TTS 存入音频库失败: ${it.message}" } }
+                .getOrNull()
+            if (gid == null) GlassLog.b("Float") { "TTS 存入音频库失败（没有已生成的语音）" }
+        }
     }
 
     private fun copyToClipboard(text: String) {

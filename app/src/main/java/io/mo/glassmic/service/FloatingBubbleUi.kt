@@ -184,8 +184,15 @@ fun FloatingBubbleRoot(
     onRefreshVoices: (force: Boolean) -> Unit = {},
     loadVoiceCover: suspend (String) -> ImageBitmap? = { null },
     onCopyText: (String) -> Unit = {},
+    fishModel: String = "",
+    onSelectFishModel: (String) -> Unit = {},
+    fishCredit: String? = null,
+    onSaveTts: (groupId: String?) -> Unit = {},
+    saveGroups: List<FloatGroupItem> = emptyList(),
     ttsProgressLines: List<String> = emptyList(),
     ttsEnhanced: TtsProgress.Enhanced? = null,
+    llmTemperature: Float = -1f,
+    onSetLlmTemperature: (Float) -> Unit = {},
 ) {
     // 面板尺寸：拖动中实时变化，松手后经 onResizePanel 存进配置。
     // 对象只创建一次——拖动手势在 pointerInput(Unit) 里常驻，若配置一变就换新对象，
@@ -340,6 +347,11 @@ fun FloatingBubbleRoot(
                             onRefreshVoices = onRefreshVoices,
                             loadVoiceCover = loadVoiceCover,
                             onCopyText = onCopyText,
+                            fishModel = fishModel,
+                            onSelectFishModel = onSelectFishModel,
+                            fishCredit = fishCredit,
+                            onSaveTts = onSaveTts,
+                            saveGroups = groups,
                             progressLines = ttsProgressLines
                         )
                     }
@@ -379,7 +391,10 @@ fun FloatingBubbleRoot(
                     progressBarEnabled = ttsProgressBarEnabled,
                     onToggleProgressBar = onToggleTtsProgressBar,
                     delayMs = ttsDelayMs,
-                    onSetDelay = onSetTtsDelay
+                    onSetDelay = onSetTtsDelay,
+                    fishMode = fishMode,
+                    llmTemperature = llmTemperature,
+                    onSetLlmTemperature = onSetLlmTemperature
                 )
             }
         }
@@ -949,6 +964,11 @@ private fun TtsTab(
     onRefreshVoices: (force: Boolean) -> Unit = {},
     loadVoiceCover: suspend (String) -> ImageBitmap? = { null },
     onCopyText: (String) -> Unit = {},
+    fishModel: String = "",
+    onSelectFishModel: (String) -> Unit = {},
+    fishCredit: String? = null,
+    onSaveTts: (groupId: String?) -> Unit = {},
+    saveGroups: List<FloatGroupItem> = emptyList(),
     progressLines: List<String> = emptyList(),
 ) {
     val t = glass
@@ -974,7 +994,10 @@ private fun TtsTab(
             onSetMode = onSetFishTextMode,
             refreshing = voicesRefreshing,
             onRefresh = onRefreshVoices,
-            loadCover = loadVoiceCover
+            loadCover = loadVoiceCover,
+            model = fishModel,
+            onSelectModel = onSelectFishModel,
+            credit = fishCredit
         )
     }
 
@@ -1064,6 +1087,11 @@ private fun TtsTab(
         GenerateLog(progressLines, generating)
     }
 
+    // 生成好的语音存进音频库：选一个分组（没有分组时新建「TTS」分组）
+    if (ready && !generating) {
+        SaveToLibrary(saveGroups, onSaveTts)
+    }
+
     // 进度条：开启后，生成就绪或正在播放时显示
     if (progressBarEnabled && (ready || ttsActive)) {
         val hasDuration = durationMs > 0
@@ -1084,6 +1112,65 @@ private fun TtsTab(
     }
 }
 
+@Composable
+private fun SaveToLibrary(groups: List<FloatGroupItem>, onSave: (String?) -> Unit) {
+    val t = glass
+    var open by remember { mutableStateOf(false) }
+    var saved by remember { mutableStateOf(false) }
+    LaunchedEffect(saved) {
+        if (saved) { kotlinx.coroutines.delay(2_000); saved = false }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SmallPill(
+            stringResource(
+                when {
+                    saved -> R.string.float_tts_saved
+                    else -> R.string.float_tts_save_library
+                }
+            )
+        ) { if (!saved) open = !open }
+    }
+    if (open) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(groups, key = { it.id }) { g ->
+                Text(
+                    "${g.emoji} ${g.name}",
+                    fontSize = 12.sp, color = t.ink2, maxLines = 1,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(t.fill)
+                        .clickable { onSave(g.id); open = false; saved = true }
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                )
+            }
+            item {
+                Text(
+                    stringResource(R.string.float_tts_save_new_group),
+                    fontSize = 12.sp, color = t.primaryInk, maxLines = 1,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(t.primarySoft)
+                        .clickable { onSave(null); open = false; saved = true }
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                )
+            }
+        }
+    }
+}
+
+/** 余额显示：保留两位小数，解析失败原样显示。 */
+private fun formatCredit(raw: String): String =
+    raw.toDoubleOrNull()?.let { "%.2f".format(it) } ?: raw
+
+/** 悬浮窗里可快速切换的 Fish 模型（ID 与显示名）。第一个为默认。 */
+private val FISH_MODEL_CHIPS = listOf(
+    "s2.1-pro-free" to "S2.1 Free",
+    "drama-3" to "Drama 3",
+    "s2.1-pro" to "S2.1 Pro",
+    "s2-pro" to "S2 Pro",
+    "s1" to "S1"
+)
+
 /** 生成日志：等宽小字，最后一行在生成中高亮。 */
 @Composable
 private fun GenerateLog(lines: List<String>, generating: Boolean) {
@@ -1103,9 +1190,7 @@ private fun GenerateLog(lines: List<String>, generating: Boolean) {
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
                 fontFamily = MonoFamily,
-                color = if (current) t.ink else t.ink3,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                color = if (current) t.ink else t.ink3
             )
         }
     }
@@ -1143,8 +1228,39 @@ private fun FishOptions(
     refreshing: Boolean,
     onRefresh: (force: Boolean) -> Unit,
     loadCover: suspend (String) -> ImageBitmap?,
+    model: String,
+    onSelectModel: (String) -> Unit,
+    credit: String?,
 ) {
     val t = glass
+    // 模型切换：常用 Fish 模型 + 手填的自定义模型；右侧显示余额
+    val selectedModel = model.ifBlank { FISH_MODEL_CHIPS.first().first }
+    val chips = FISH_MODEL_CHIPS.let { list ->
+        if (list.any { it.first == selectedModel }) list else list + (selectedModel to selectedModel)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.float_tts_model), fontSize = 12.sp, color = t.ink3, modifier = Modifier.weight(1f))
+        if (credit != null) {
+            Text(stringResource(R.string.float_tts_credit, formatCredit(credit)), fontSize = 12.sp, color = t.ink3, fontFamily = MonoFamily)
+        }
+    }
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        items(chips, key = { it.first }) { (id, label) ->
+            val on = id == selectedModel
+            Text(
+                label,
+                fontSize = 12.sp,
+                fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (on) t.primaryInk else t.ink2,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (on) t.primarySoft else t.fill)
+                    .clickable { onSelectModel(id) }
+                    .padding(horizontal = 12.dp, vertical = 7.dp)
+            )
+        }
+    }
     Segmented(
         options = listOf(
             FishTextMode.FISH_TEXT_READ to stringResource(R.string.fish_mode_read),
@@ -1303,6 +1419,9 @@ private fun TtsSettings(
     onToggleProgressBar: (Boolean) -> Unit,
     delayMs: Int,
     onSetDelay: (Int) -> Unit,
+    fishMode: Boolean = false,
+    llmTemperature: Float = -1f,
+    onSetLlmTemperature: (Float) -> Unit = {},
 ) {
     val t = glass
     // 自定义延时输入展开后内容会变长，小屏上会顶出屏幕，这里给一个滚动兜底
@@ -1319,6 +1438,25 @@ private fun TtsSettings(
             Text(stringResource(R.string.float_tts_delay_hint), fontSize = 12.sp, lineHeight = 17.sp, color = t.ink3)
         }
         TtsDelaySetting(delayMs, onSetDelay)
+        if (fishMode) {
+            Column(Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.float_llm_temperature), fontSize = 15.sp)
+                Text(stringResource(R.string.float_llm_temperature_hint), fontSize = 12.sp, lineHeight = 17.sp, color = t.ink3)
+            }
+            // 负数 = 自动（按模式默认）
+            val presets = listOf(-1f, 0.2f, 0.5f, 0.8f, 1.0f)
+            val current = presets.minByOrNull { kotlin.math.abs(it - llmTemperature) } ?: -1f
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                presets.forEach { p ->
+                    DelayChip(
+                        label = if (p < 0f) stringResource(R.string.float_llm_temperature_auto) else "%.1f".format(p),
+                        selected = (llmTemperature < 0f && p < 0f) || (llmTemperature >= 0f && p == current),
+                        onClick = { onSetLlmTemperature(p) },
+                        modifier = Modifier.weight(if (p < 0f) 1.3f else 1f)
+                    )
+                }
+            }
+        }
     }
 }
 

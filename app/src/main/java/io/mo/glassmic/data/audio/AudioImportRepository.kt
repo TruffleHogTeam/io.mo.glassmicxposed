@@ -115,6 +115,56 @@ class AudioImportRepository @Inject constructor(
         entity
     }
 
+    /**
+     * 把一段 PCM16 小端数据存成 WAV 片段（悬浮窗「存入音频库」：生成好的文字转语音直接入库）。
+     */
+    suspend fun importPcm(
+        pcm: ByteArray,
+        sampleRate: Int,
+        channels: Int,
+        groupId: String,
+        displayName: String
+    ): AudioClipEntity = withContext(Dispatchers.IO) {
+        require(dao.findGroup(groupId) != null) { "片段组不存在: $groupId" }
+        require(pcm.isNotEmpty()) { "没有音频数据" }
+        val clipId = UUID.randomUUID().toString()
+        val rel = "$groupId/$clipId.wav"
+        val target = resolver.fileFor(rel).apply { parentFile?.mkdirs() }
+        FileOutputStream(target).use { out ->
+            out.write(wavHeader(pcm.size, sampleRate, channels))
+            out.write(pcm)
+        }
+        val name = displayName.ifBlank { "TTS" }
+        val durationMs = pcm.size.toLong() * 1000L / (sampleRate.toLong() * channels * 2)
+        val entity = AudioClipEntity(
+            id = clipId,
+            groupId = groupId,
+            displayName = name,
+            fileName = "$name.wav",
+            relativePath = rel,
+            mimeType = "audio/wav",
+            durationMs = durationMs,
+            sizeBytes = target.length(),
+            sampleRate = sampleRate,
+            channels = channels,
+            createdAt = System.currentTimeMillis(),
+            sortOrder = dao.maxClipOrderInGroup(groupId) + 1
+        )
+        dao.upsertClip(entity)
+        GlassLog.b("AudioImport") { "TTS 存入音频库: name=${entity.displayName} dur=${durationMs}ms" }
+        entity
+    }
+
+    private fun wavHeader(dataBytes: Int, sampleRate: Int, channels: Int): ByteArray {
+        val byteRate = sampleRate * channels * 2
+        return java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray()); putInt(36 + dataBytes); put("WAVE".toByteArray())
+            put("fmt ".toByteArray()); putInt(16); putShort(1); putShort(channels.toShort())
+            putInt(sampleRate); putInt(byteRate); putShort((channels * 2).toShort()); putShort(16)
+            put("data".toByteArray()); putInt(dataBytes)
+        }.array()
+    }
+
     suspend fun renameClip(clipId: String, newName: String) = withContext(Dispatchers.IO) {
         dao.renameClip(clipId, newName.ifBlank { "未命名" })
     }

@@ -121,6 +121,7 @@ message TtsAiConfig {
   string fish_voices = 17;        // 音色预设：逗号分隔的「名称:声音ID」，供悬浮窗快速切换（默认空）
   FishTextMode fish_text_mode = 18; // 合成前文本处理：照读 / 润色 / 自动回复
   string persona_prompt = 19;       // 润色 / 自动回复用的人设（留空用内置默认人设）
+  optional float llm_temperature = 20; // LLM 采样温度（未设置时按模式默认：加标签/润色 0.2，回复 0.7）
 }
 
 // Fish 合成前对文本的处理方式（润色与自动回复需要 LLM）
