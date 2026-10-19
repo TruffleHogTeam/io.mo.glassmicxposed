@@ -76,6 +76,21 @@ internal object FishAutoTag {
             .replace(spacesRegex, " ").trim()
     }
 
+    private val trailingTagRegex = Regex("\\s*\\[[^\\[\\]\\n]{1,60}]\\s*$")
+
+    /**
+     * 去掉结尾处的 [方向]：标签只作用于后面的内容，放在末尾没有可作用的文字，
+     * Fish 可能把它读出来或生成怪声（Fish 官方提示词同样要求「不要以标签结尾」）。
+     */
+    fun dropTrailingTags(text: String): String {
+        var s = text.trimEnd()
+        while (true) {
+            val next = trailingTagRegex.replace(s, "")
+            if (next == s) return s
+            s = next.trimEnd()
+        }
+    }
+
     /** 文本里是否已经带有标签（例如已优化过的文本被再次生成）。 */
     fun hasFishTags(text: String): Boolean =
         bracketRegex.containsMatchIn(text) || pairedRegex.containsMatchIn(text)

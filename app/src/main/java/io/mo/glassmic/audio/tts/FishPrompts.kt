@@ -86,15 +86,45 @@ internal object FishPrompts {
                 "Always close what you open and never nest them.\n" +
                 "- If an *asterisk action* is a sound (e.g. *giggles*), turn it into a bracketed cue.\n"
         } else {
-            "DELIVERY (Fish Audio S2 / S2.1):\n" +
-                "- Delivery tags go in square brackets and affect the speech that follows them.\n" +
-                "- Start with ONE emotional tone tag that fits the overall mood.\n" +
-                "- Tags are free-form, but these work best: tones " +
-                FishAutoTag.TONE_TAGS.joinToString(", ") { "[$it]" } + "; effects " +
-                FishAutoTag.EFFECT_TAGS.joinToString(", ") { "[$it]" } + ".\n" +
-                "- Add tags where a real person would react, roughly one per sentence, never two in a " +
-                "row. Use [pause] for natural beats and switch tone when the mood shifts.\n" +
-                "- Do not use angle-bracket tags.\n" +
-                "- If an *asterisk action* is a sound (e.g. *giggles*), turn it into the closest tag.\n"
+            S2_TAG_GUIDE
         }
+
+    /**
+     * S2 / S2.1 打标签指南。改编自 Fish Audio 管理员分享的 API 自动标签提示词
+     * （https://gist.github.com/JarodMica/8197976f2bde9fa8a27f026df9725b1a），
+     * 网页版 Studio 的「自动标签」不对 API 开放，API 用户按这份指南让 LLM 打标签。
+     */
+    private val S2_TAG_GUIDE = """
+DELIVERY TAGS (Fish Audio S2 / S2.1):
+The voice follows inline square-bracket cues for emotion, tone, pacing, pauses, laughter and vocal effects. Use them intentionally so the line sounds natural, expressive and human, never flat.
+
+The most important cue is [emphasis]. Put it directly before the word or short phrase that matters most: contrast words, punchlines, conclusions, warnings, surprising details, emotional turns, or the main point of a sentence. Use it often but never on every word.
+Good: [calm] Most people test TTS with [emphasis] flat text, then wonder why the audio [emphasis] sounds robotic.
+Bad: [emphasis] Most [emphasis] people [emphasis] test [emphasis] TTS.
+
+Tags you can use:
+- Basic emotions: [happy] [sad] [angry] [excited] [calm] [nervous] [confident] [surprised] [satisfied] [delighted] [scared] [worried] [upset] [frustrated] [depressed] [empathetic] [embarrassed] [disgusted] [moved] [proud] [relaxed] [grateful] [curious] [sarcastic]
+- Advanced emotions: [disdainful] [unhappy] [anxious] [hysterical] [indifferent] [uncertain] [doubtful] [confused] [disappointed] [regretful] [guilty] [ashamed] [jealous] [envious] [hopeful] [optimistic] [pessimistic] [nostalgic] [lonely] [bored] [contemptuous] [sympathetic] [compassionate] [determined] [resigned]
+- Tone: [in a hurry tone] [shouting] [screaming] [whispering] [soft tone]
+- Effects: [laughing] [sobbing] [crying loudly] [sighing] [groaning] [panting] [gasping] [yawning]
+- Pauses: [break] (short) and [long-break] (longer, dramatic)
+- Short natural-language cues when clear and useful, e.g. [slightly sad] [warm and happy] [playfully sarcastic] [quietly confident]
+
+Rules:
+1. Tags are forward instructions: a tag always comes BEFORE the words, sound or pause it controls.
+2. NEVER put a tag at the end of a sentence, paragraph or the output. No tag right after sentence-ending punctuation unless it starts the next sentence.
+3. Put a sentence-level emotion at the start of the sentence. One main emotion per sentence; never stack several emotions together.
+4. Use [laughing] before laughter, warmth, humor or teasing. Do not use [chuckling].
+5. Use [sighing] before reflective, relieved, disappointed or mildly frustrated speech.
+6. Use [break] or [long-break] before the next phrase when a pause is needed. Do not use [pause].
+7. Use [whispering] before secrets, intimacy or quiet delivery. Use [shouting] only before speech that should really be loud.
+8. Keep sentences short and spoken-friendly; avoid conflicting tags unless the contrast is intentional.
+9. Only use [sarcastic] or other emotions when the words actually carry that meaning.
+10. Do not use angle-bracket tags.
+
+Correct: [sighing] This is where most benchmarks fall apart.
+Incorrect: This is where most benchmarks fall apart. [sighing]
+Correct: [curious] But what happens when you direct the voice like a real [emphasis] performance? [break] Suddenly it sounds much more human.
+Correct: [happy] A great voice should handle warmth, humor and timing. [laughing] Not just, "Hello, this is a test."
+""".trim() + "\n"
 }
