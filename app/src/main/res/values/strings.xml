@@ -492,7 +492,7 @@
     <string name="float_pause">暂停</string>
     <string name="float_play_resume">播放 / 继续</string>
     <string name="ai_tts_section_fish">Fish Audio</string>
-    <string name="ai_tts_fish_hint">API Key 填 Fish Audio 的密钥；模型可选 s2.1-pro-free（免费）/ s2.1-pro / s2-pro / s1；音色填 Fish 声音 ID（网址 /m/ 后那串，留空使用 Fish 默认音色）。</string>
+    <string name="ai_tts_fish_hint">API Key 填 Fish Audio 的密钥；模型可选 s2.1-pro-free（免费）/ drama-3（最新，表现力最强）/ s2.1-pro / s2-pro / s1；音色填 Fish 声音 ID（网址 /m/ 后那串，留空使用 Fish 默认音色）。</string>
     <string name="ai_tts_fish_auto_tag">自动标签</string>
     <string name="ai_tts_fish_auto_tag_hint">合成前用 LLM 自动插入 Fish 内置情绪 / 音效标签（如 [breathy]、[laughing]、[pause]），让语音更像真人</string>
     <string name="ai_tts_fish_humanize">口语化改写</string>
@@ -525,4 +525,33 @@
     <string name="ai_tts_fish_fetching">加载中…</string>
     <string name="ai_tts_fish_no_voices">没有找到声音</string>
     <string name="float_tts_clear">清空</string>
+    <string name="tts_step_already_processed">文本已处理过，跳过 LLM</string>
+    <string name="tts_step_llm_polish">LLM 润色文本中（%1$s）…</string>
+    <string name="tts_step_llm_reply">LLM 生成回复中（%1$s）…</string>
+    <string name="tts_step_reply_needs_key">自动回复需要 LLM API Key（设置 → AI TTS → Fish Audio）</string>
+    <string name="ai_tts_fish_text_mode">文本模式</string>
+    <string name="ai_tts_fish_text_mode_hint">照读：读你写的文字（开了自动标签会加标签）。润色：纠正语法并改成可爱的口语。回复：把你的文字当成别人发来的消息，读出回复。润色和回复需要填写下方的 LLM Key。</string>
+    <string name="fish_mode_read">照读</string>
+    <string name="fish_mode_polish">润色</string>
+    <string name="fish_mode_reply">回复</string>
+    <string name="ai_tts_persona">人设（润色与回复使用）</string>
+    <string name="ai_tts_persona_placeholder">留空 = 二十出头、说话轻松温柔又有点俏皮的女生</string>
+    <string name="ai_tts_persona_hint">描述说话的人：名字、年龄感、撒娇程度、说话方式。回复会沿用对方消息的语言。</string>
+    <string name="float_tts_copy">复制</string>
+    <string name="float_tts_copied">已复制</string>
+    <string name="float_tts_voice_default">Fish 默认</string>
+    <string name="float_tts_no_voices">还没有音色。可在 设置 → AI TTS → Fish Audio 里添加预设或选取声音。</string>
+    <string name="float_tts_voice_refresh">刷新我的声音</string>
+    <string name="settings_section_backup">备份</string>
+    <string name="settings_backup_export">导出设置</string>
+    <string name="settings_backup_export_hint">把全部设置（含 API Key、音色、人设）保存为 JSON 文件，不含音频文件。</string>
+    <string name="settings_backup_import">导入设置</string>
+    <string name="settings_backup_import_hint">读取 GlassMic 导出的设置 JSON 文件。</string>
+    <string name="settings_backup_import_title">导入设置？</string>
+    <string name="settings_backup_import_message">将用文件中的设置（含 API Key）替换当前设置。音频文件、悬浮球图标和背景图不在备份中。</string>
+    <string name="settings_backup_import_confirm">导入</string>
+    <string name="settings_backup_cancel">取消</string>
+    <string name="settings_backup_exported">设置已导出。文件里有你的 API Key，请妥善保管。</string>
+    <string name="settings_backup_imported">设置已导入</string>
+    <string name="settings_backup_failed">备份失败：%1$s</string>
 </resources>

@@ -40,6 +40,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import io.mo.glassmic.R
+import io.mo.glassmic.audio.tts.FishVoice
+import io.mo.glassmic.proto.FishTextMode
 import io.mo.glassmic.proto.TtsProvider
 import io.mo.glassmic.ui.common.BackHeader
 import io.mo.glassmic.ui.common.GlassCard
@@ -51,6 +53,7 @@ import io.mo.glassmic.ui.common.LabeledField
 import io.mo.glassmic.ui.common.MonoFamily
 import io.mo.glassmic.ui.common.PrimaryButton
 import io.mo.glassmic.ui.common.RadioDot
+import io.mo.glassmic.ui.common.Segmented
 import io.mo.glassmic.ui.common.SectionLabel
 import io.mo.glassmic.ui.common.SettingRow
 import io.mo.glassmic.ui.common.SoftButton
@@ -200,13 +203,32 @@ fun AiTtsSettingsScreen(
                                 checked = ai.fishAutoTag,
                                 onChange = vm::setFishAutoTag
                             )
-                            if (ai.fishAutoTag) {
+                            val textMode = ai.fishTextMode.takeIf { it != FishTextMode.UNRECOGNIZED } ?: FishTextMode.FISH_TEXT_READ
+                            Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(stringResource(R.string.ai_tts_fish_text_mode), fontSize = 15.sp)
+                                Segmented(
+                                    options = listOf(
+                                        FishTextMode.FISH_TEXT_READ to stringResource(R.string.fish_mode_read),
+                                        FishTextMode.FISH_TEXT_POLISH to stringResource(R.string.fish_mode_polish),
+                                        FishTextMode.FISH_TEXT_REPLY to stringResource(R.string.fish_mode_reply)
+                                    ),
+                                    selected = textMode,
+                                    onSelect = vm::setFishTextMode
+                                )
+                                Text(stringResource(R.string.ai_tts_fish_text_mode_hint), fontSize = 12.sp, lineHeight = 17.sp, color = t.ink3)
+                            }
+                            if (ai.fishAutoTag && textMode == FishTextMode.FISH_TEXT_READ) {
                                 SwitchRow(
                                     label = stringResource(R.string.ai_tts_fish_humanize),
                                     hint = stringResource(R.string.ai_tts_fish_humanize_hint),
                                     checked = ai.fishHumanize,
                                     onChange = vm::setFishHumanize
                                 )
+                            }
+                            if (textMode != FishTextMode.FISH_TEXT_READ) {
+                                PersonaField(ai.personaPrompt, vm::setPersonaPrompt)
+                            }
+                            if (ai.fishAutoTag || textMode != FishTextMode.FISH_TEXT_READ) {
                                 TextFieldRow(stringResource(R.string.ai_tts_llm_endpoint), ai.llmEndpoint, "https://api.deepseek.com/v1", vm::setLlmEndpoint)
                                 TextFieldRow(stringResource(R.string.ai_tts_llm_api_key), ai.llmApiKey, "sk-…", vm::setLlmApiKey)
                                 TextFieldRow(stringResource(R.string.ai_tts_llm_model), ai.llmModel, "deepseek-chat", vm::setLlmModel)
@@ -319,10 +341,27 @@ private fun TextFieldRow(label: String, initial: String, placeholder: String?, o
 
 /** 获取 Fish 声音：搜索框留空 = 我的声音，否则按名称搜索；下拉中选一个即设为当前音色并加入预设。 */
 @Composable
+private fun PersonaField(initial: String, onCommit: (String) -> Unit) {
+    val t = glass
+    var value by remember(initial) { mutableStateOf(initial) }
+    Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(stringResource(R.string.ai_tts_persona), fontSize = 12.sp, color = t.ink3)
+        GlassTextField(
+            value = value,
+            onValueChange = { value = it; onCommit(it) },
+            singleLine = false,
+            minLines = 3,
+            placeholder = stringResource(R.string.ai_tts_persona_placeholder)
+        )
+        Text(stringResource(R.string.ai_tts_persona_hint), fontSize = 12.sp, lineHeight = 17.sp, color = t.ink3)
+    }
+}
+
+@Composable
 private fun FishVoicePicker(
     state: FishVoicesState,
     onFetch: (String) -> Unit,
-    onPick: (String, String) -> Unit,
+    onPick: (FishVoice) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val t = glass
@@ -352,8 +391,8 @@ private fun FishVoicePicker(
                 shape = RoundedCornerShape(18.dp),
                 containerColor = t.sheet
             ) {
-                (state as? FishVoicesState.Loaded)?.voices?.forEach { (name, id) ->
-                    DropdownMenuItem(text = { Text(name, fontSize = 14.sp) }, onClick = { onPick(name, id) })
+                (state as? FishVoicesState.Loaded)?.voices?.forEach { v ->
+                    DropdownMenuItem(text = { Text(v.title, fontSize = 14.sp) }, onClick = { onPick(v) })
                 }
             }
         }

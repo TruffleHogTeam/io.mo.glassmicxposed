@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -107,6 +108,36 @@ fun SettingsScreen(
     ) { uri -> if (uri != null) vm.setBackgroundImage(uri) }
     val pickBackground = {
         backgroundPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
+
+    val backupMessage by vm.backupMessage.collectAsState()
+    LaunchedEffect(backupMessage) {
+        backupMessage?.let { toast.showSnackbar(it); vm.consumeBackupMessage() }
+    }
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri -> if (uri != null) vm.exportSettings(uri) }
+    var pendingImport by remember { mutableStateOf<android.net.Uri?>(null) }
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri -> if (uri != null) pendingImport = uri }
+    pendingImport?.let { uri ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pendingImport = null },
+            shape = RoundedCornerShape(28.dp),
+            title = { Text(stringResource(R.string.settings_backup_import_title), fontSize = 18.sp, fontWeight = FontWeight.SemiBold) },
+            text = { Text(stringResource(R.string.settings_backup_import_message), fontSize = 14.sp, lineHeight = 20.sp) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { vm.importSettings(uri); pendingImport = null }) {
+                    Text(stringResource(R.string.settings_backup_import_confirm))
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { pendingImport = null }) {
+                    Text(stringResource(R.string.settings_backup_cancel))
+                }
+            }
+        )
     }
 
     val iconPickerLauncher = rememberLauncherForActivityResult(
@@ -433,6 +464,22 @@ fun SettingsScreen(
                         }
                     }
                 }
+            } }
+
+            // ============ 备份 ============
+            item { Section(stringResource(R.string.settings_section_backup)) {
+                SettingRow(
+                    stringResource(R.string.settings_backup_export),
+                    subtitle = stringResource(R.string.settings_backup_export_hint),
+                    onClick = { exportLauncher.launch("glassmic-settings.json") },
+                    chevron = true
+                )
+                SettingRow(
+                    stringResource(R.string.settings_backup_import),
+                    subtitle = stringResource(R.string.settings_backup_import_hint),
+                    onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
+                    chevron = true
+                )
             } }
 
             // ============ 诊断与关于 ============

@@ -119,6 +119,15 @@ message TtsAiConfig {
   string llm_model = 15;          // LLM 模型名（留空默认 deepseek-chat）
   bool fish_humanize = 16;        // 自动标签时是否同时把措辞改写得更口语化（关闭则一字不改）
   string fish_voices = 17;        // 音色预设：逗号分隔的「名称:声音ID」，供悬浮窗快速切换（默认空）
+  FishTextMode fish_text_mode = 18; // 合成前文本处理：照读 / 润色 / 自动回复
+  string persona_prompt = 19;       // 润色 / 自动回复用的人设（留空用内置默认人设）
+}
+
+// Fish 合成前对文本的处理方式（润色与自动回复需要 LLM）
+enum FishTextMode {
+  FISH_TEXT_READ = 0;    // 照读（开了自动标签时只加标签）
+  FISH_TEXT_POLISH = 1;  // 纠正语法并按人设改成口语
+  FISH_TEXT_REPLY = 2;   // 把输入当成别人发来的消息，按人设生成回复
 }
 
 enum TtsProvider {

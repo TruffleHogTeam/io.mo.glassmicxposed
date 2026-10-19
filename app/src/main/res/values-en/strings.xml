@@ -492,7 +492,7 @@
     <string name="float_pause">Pause</string>
     <string name="float_play_resume">Play / resume</string>
     <string name="ai_tts_section_fish">Fish Audio</string>
-    <string name="ai_tts_fish_hint">API Key: your Fish Audio key. Model: s2.1-pro-free (free) / s2.1-pro / s2-pro / s1. Voice: a Fish voice ID (the code after /m/ in the voice URL; empty = Fish\'s default voice).</string>
+    <string name="ai_tts_fish_hint">API Key: your Fish Audio key. Model: s2.1-pro-free (free) / drama-3 (newest, most expressive) / s2.1-pro / s2-pro / s1. Voice: a Fish voice ID (the code after /m/ in the voice URL; empty = Fish\'s default voice).</string>
     <string name="ai_tts_fish_auto_tag">Auto tags</string>
     <string name="ai_tts_fish_auto_tag_hint">Before synthesis, an LLM inserts Fish\'s built-in emotion / effect tags (e.g. [breathy], [laughing], [pause]) so the voice sounds human</string>
     <string name="ai_tts_fish_humanize">Humanize wording</string>
@@ -525,4 +525,33 @@
     <string name="ai_tts_fish_fetching">Loading…</string>
     <string name="ai_tts_fish_no_voices">No voices found</string>
     <string name="float_tts_clear">Clear</string>
+    <string name="tts_step_already_processed">Text was already processed, skipping the LLM</string>
+    <string name="tts_step_llm_polish">Polishing text with LLM (%1$s)…</string>
+    <string name="tts_step_llm_reply">Writing a reply with LLM (%1$s)…</string>
+    <string name="tts_step_reply_needs_key">Auto reply needs an LLM API key (Settings → AI TTS → Fish Audio)</string>
+    <string name="ai_tts_fish_text_mode">Text mode</string>
+    <string name="ai_tts_fish_text_mode_hint">Read: speak your text (adds tags if Auto tags is on). Polish: fix grammar and make it sound casual and girly. Reply: treat your text as a message someone sent and speak a reply. Polish and Reply need the LLM key below.</string>
+    <string name="fish_mode_read">Read</string>
+    <string name="fish_mode_polish">Polish</string>
+    <string name="fish_mode_reply">Reply</string>
+    <string name="ai_tts_persona">Persona (for Polish and Reply)</string>
+    <string name="ai_tts_persona_placeholder">Empty = a sweet, playful girl in her early twenties who talks casually and warmly</string>
+    <string name="ai_tts_persona_hint">Describe who is speaking: name, age vibe, how flirty, how she talks. The reply keeps the language of the incoming message.</string>
+    <string name="float_tts_copy">Copy</string>
+    <string name="float_tts_copied">Copied</string>
+    <string name="float_tts_voice_default">Fish default</string>
+    <string name="float_tts_no_voices">No voices yet. Add presets or pick voices in Settings → AI TTS → Fish Audio.</string>
+    <string name="float_tts_voice_refresh">Refresh my voices</string>
+    <string name="settings_section_backup">Backup</string>
+    <string name="settings_backup_export">Export settings</string>
+    <string name="settings_backup_export_hint">Saves all settings, including API keys, voices and persona, to a JSON file. Audio files are not included.</string>
+    <string name="settings_backup_import">Import settings</string>
+    <string name="settings_backup_import_hint">Load a GlassMic settings JSON file.</string>
+    <string name="settings_backup_import_title">Import settings?</string>
+    <string name="settings_backup_import_message">This replaces your current settings, including API keys, with the ones in the file. Audio files, the floating icon and background images are not part of the backup.</string>
+    <string name="settings_backup_import_confirm">Import</string>
+    <string name="settings_backup_cancel">Cancel</string>
+    <string name="settings_backup_exported">Settings exported. The file contains your API keys, so keep it private.</string>
+    <string name="settings_backup_imported">Settings imported</string>
+    <string name="settings_backup_failed">Backup failed: %1$s</string>
 </resources>

@@ -37,7 +37,12 @@ import io.mo.glassmic.log.GlassLog
 import io.mo.glassmic.proto.AppConfig
 import io.mo.glassmic.proto.FloatingSize
 import io.mo.glassmic.proto.TtsAiConfig
+import io.mo.glassmic.proto.FishTextMode
 import io.mo.glassmic.proto.TtsProvider
+import io.mo.glassmic.audio.tts.FishVoice
+import androidx.compose.ui.graphics.asImageBitmap
+import io.mo.glassmic.audio.tts.FishAutoTag
+import io.mo.glassmic.audio.tts.FishVoiceRepository
 import io.mo.glassmic.audio.tts.FishVoices
 import io.mo.glassmic.audio.tts.TtsProgress
 import io.mo.glassmic.ui.theme.GlassThemeContent
@@ -67,6 +72,7 @@ class FloatingWindowService : LifecycleService() {
     @Inject lateinit var iconStore: FloatingIconStore
     @Inject lateinit var volumeShortcut: VolumeShortcutRepository
     @Inject lateinit var ttsProgress: TtsProgress
+    @Inject lateinit var fishVoiceRepo: FishVoiceRepository
 
     private var windowManager: WindowManager? = null
     private var host: FloatingOverlayHost? = null
@@ -253,6 +259,8 @@ class FloatingWindowService : LifecycleService() {
                 val ttsDelayRemainingMs by playback.ttsDelayRemainingMs.collectAsState()
                 val ttsProgressLines by ttsProgress.lines.collectAsState()
                 val ttsEnhanced by ttsProgress.enhanced.collectAsState()
+                val knownVoices by fishVoiceRepo.voices.collectAsState()
+                val voicesRefreshing by fishVoiceRepo.refreshing.collectAsState()
 
                 val activeFile = (rt.currentSourceType == SourceType.FILE || rt.currentSourceType == SourceType.TTS) && rt.enabled && !rt.safeMode
                 val currentId = cfg.currentAudioId
@@ -316,11 +324,18 @@ class FloatingWindowService : LifecycleService() {
                     panelHeightDp = cfg.floatingWindow.panelHeightDp,
                     onResizePanel = { w, h -> onResizePanel(w, h) },
                     fishMode = cfg.tts.ai.enabled && cfg.tts.ai.provider == TtsProvider.FISH,
-                    fishVoices = FishVoices.parse(cfg.tts.ai.fishVoices),
+                    fishVoices = floatVoices(cfg.tts.ai.fishVoices, knownVoices),
                     fishVoiceId = cfg.tts.ai.voice.trim(),
                     onSelectFishVoice = { id -> updateFishAi { it.voice = id } },
                     fishEnhance = cfg.tts.ai.fishAutoTag,
                     onToggleFishEnhance = { on -> updateFishAi { it.fishAutoTag = on } },
+                    fishTextMode = cfg.tts.ai.fishTextMode.takeIf { it != FishTextMode.UNRECOGNIZED }
+                        ?: FishTextMode.FISH_TEXT_READ,
+                    onSetFishTextMode = { m -> updateFishAi { it.fishTextMode = m } },
+                    voicesRefreshing = voicesRefreshing,
+                    onRefreshVoices = { force -> fishVoiceRepo.refreshMine(force) },
+                    loadVoiceCover = { url -> fishVoiceRepo.cover(url)?.asImageBitmap() },
+                    onCopyText = { text -> copyToClipboard(FishAutoTag.plainText(text)) },
                     ttsProgressLines = ttsProgressLines,
                     ttsEnhanced = ttsEnhanced,
                 )
@@ -381,6 +396,21 @@ class FloatingWindowService : LifecycleService() {
         ttsPlayJob?.cancel()
         ttsPlayJob = null
         playback.clearTtsDelayCountdown()
+    }
+
+    /** 音色下拉：先列预设（顺序按设置里的写法），再列「我的声音」等已知声音；名字与封面取自已知声音。 */
+    private fun floatVoices(presetsRaw: String, known: List<FishVoice>): List<FloatVoice> {
+        val presets = FishVoices.parse(presetsRaw).map { (name, id) ->
+            FloatVoice(id, name, known.firstOrNull { it.id == id }?.coverUrl.orEmpty())
+        }
+        val rest = known.filter { k -> presets.none { it.id == k.id } }.map { FloatVoice(it.id, it.title, it.coverUrl) }
+        return presets + rest
+    }
+
+    private fun copyToClipboard(text: String) {
+        if (text.isBlank()) return
+        val cm = getSystemService(android.content.ClipboardManager::class.java) ?: return
+        runCatching { cm.setPrimaryClip(android.content.ClipData.newPlainText("GlassMic", text)) }
     }
 
     /** 悬浮窗里切换 Fish 音色 / 优化文本开关，直接写回 AI TTS 配置（与设置页同步）。 */

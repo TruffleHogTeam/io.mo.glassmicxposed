@@ -1,65 +1,47 @@
 package io.mo.glassmic.audio.tts
 
 /**
- * Fish Audio 自动标签：合成前让 LLM 给文本插入 Fish S2 内置的情绪 / 音效标签。
+ * Fish Audio 标签清洗：合成前让 LLM 插入的 [方向] / <成对标签> 经这里规整后再送去合成。
  *
- * 只允许 Fish 标签面板里的官方标签（[TONE_TAGS] + [EFFECT_TAGS]），
- * LLM 自造的其它 [xxx] 会被 [keepFishTags] 过滤掉，避免 Fish 把它当文字读出来。
- * 这里只负责提示词与清洗，网络请求由 [AiTtsSynthesizer] 发起。
+ * S2 / S2.1 的 [xxx] 是自由文本方向（不限固定列表），Drama 3 额外支持 7 个成对标签
+ * （<whisper>…</whisper> 等，只作用于包住的词）。这里只负责清洗，提示词见 [FishPrompts]，
+ * 网络请求由 [AiTtsSynthesizer] 发起。
  */
 internal object FishAutoTag {
 
-    /** 情绪语气标签（Fish 标签面板 Emotional Tone）。 */
+    /** 情绪语气标签示例（Fish 标签面板 Emotional Tone）。S2.1 起不限于这些，提示词里作为参考。 */
     val TONE_TAGS = listOf(
         "angry", "sad", "embarrassed", "emphasis", "whispering", "soft", "breathy", "excited"
     )
 
-    /** 音效标签（Fish 标签面板 Audio Effects）。群体笑声类不适合一对一语音，未列入。 */
+    /** 音效标签示例（Fish 标签面板 Audio Effects）。群体笑声类不适合一对一语音，未列入。 */
     val EFFECT_TAGS = listOf(
         "laughing", "chuckling", "moaning", "clear throat", "sobbing", "crying loudly",
         "sighing", "panting", "groaning", "pause", "long pause"
     )
 
-    private val allowed = (TONE_TAGS + EFFECT_TAGS).map { it.lowercase() }.toSet()
-    private val tagRegex = Regex("\\[([^\\]\\n]{1,60})]")
+    /** Drama 3 的成对标签：<name>词</name>，只改变被包住的词。 */
+    val PAIRED_TAGS = listOf("whisper", "emphasis", "soft", "fast", "slow", "stress", "forceful")
+
+    const val DRAMA_MODEL = "drama-3"
+
+    fun supportsPairedTags(model: String): Boolean = model.trim().lowercase().startsWith("drama")
+
+    private val bracketRegex = Regex("\\[([^\\[\\]\\n]{1,60})]")
+    private val pairedRegex = Regex(
+        "<(${PAIRED_TAGS.joinToString("|")})>([^<>\\n]{1,200})</\\1>",
+        RegexOption.IGNORE_CASE
+    )
+    private val angleRegex = Regex("</?[A-Za-z][A-Za-z ]{0,20}>")
     private val emojiRegex = Regex("[\\x{1F000}-\\x{1FAFF}\\x{2600}-\\x{27BF}\\x{FE0F}\\x{200D}]+")
     private val actionRegex = Regex("\\*[^*\\n]{1,80}\\*")
     private val spacesRegex = Regex("[ \\t]{2,}")
 
-    fun systemPrompt(humanize: Boolean): String = buildString {
-        append(
-            "You are a voice director preparing a script for an ultra-realistic expressive " +
-                "text-to-speech model (Fish Audio S2). It understands delivery tags in square " +
-                "brackets — each tag affects the speech that follows it.\n\n" +
-                "Make the text sound like a real person talking casually — warm, natural, " +
-                "human, never robotic.\n\n" +
-                "ALLOWED TAGS (use ONLY these, spelled exactly like this, nothing else):\n"
-        )
-        append("- Emotional tone: ").append(TONE_TAGS.joinToString(", ") { "[$it]" }).append('\n')
-        append("- Audio effects: ").append(EFFECT_TAGS.joinToString(", ") { "[$it]" }).append("\n\n")
-        append(
-            "RULES:\n" +
-                "1. Keep the same language as the input text.\n" +
-                "2. Start with ONE emotional tone tag that fits the overall mood.\n" +
-                "3. Add tags where a real person would react — roughly one per sentence, never " +
-                "two in a row. Use [pause] for natural beats and switch tone tags when the mood shifts.\n" +
-                "4. Drop emojis, markdown and URLs. If an *asterisk action* is a sound " +
-                "(e.g. *giggles*, *sighs*), turn it into the closest allowed tag.\n" +
-                "5. Output ONLY the final tagged script — no quotes, no explanations.\n"
-        )
-        if (humanize) {
-            append(
-                "6. Humanize the wording: contractions, light natural fillers (mm, um, like) " +
-                    "sparingly, trailing ... for hesitation. Keep the SAME meaning and roughly the " +
-                    "same length — do NOT add new ideas or content.\n"
-            )
-        } else {
-            append(
-                "6. Keep the EXACT same words in the same order. Only add tags and punctuation " +
-                    "(..., !, ?) — do NOT rephrase, add or remove words.\n"
-            )
-        }
-    }
+    // 清洗时用的占位符，保证合法标签不被后面的「去落单括号」误伤
+    private const val OPEN_SQ = '\u0000'
+    private const val CLOSE_SQ = '\u0001'
+    private const val OPEN_ANG = '\u0002'
+    private const val CLOSE_ANG = '\u0003'
 
     /**
      * 去掉 Fish 会照读的内容：emoji、多余空白，[actions] 为 true 时连同 *动作* 一起去掉。
@@ -70,32 +52,42 @@ internal object FishAutoTag {
             .replace(emojiRegex, "").replace(spacesRegex, " ").trim()
 
     /**
-     * 只保留 Fish 内置标签（统一写成小写 [tag]），其余 [xxx] 删除；
-     * 落单的 [ 或 ] 也去掉——LLM 输出被截断时会留下半个括号，Fish 会照读甚至返回空音频。
+     * 规整标签：保留 1–60 字的 [方向]；[model] 为 Drama 时保留成对且名字合法的 <tag>…</tag>，
+     * 其余尖括号标签删掉（内容保留）；落单的 [ ] < > 一律去掉——LLM 输出被截断时会留下半个括号，
+     * Fish 会照读甚至返回空音频。
      */
-    fun keepFishTags(text: String): String {
-        val out = StringBuilder()
-        var last = 0
-        for (m in tagRegex.findAll(text)) {
-            out.append(text, last, m.range.first)
-            val name = m.groupValues[1].trim().lowercase()
-            if (name in allowed) out.append('\u0000').append(name).append('\u0001')
-            last = m.range.last + 1
+    fun keepFishTags(text: String, model: String = ""): String {
+        var s = text
+        if (supportsPairedTags(model)) {
+            s = pairedRegex.replace(s) { m ->
+                val name = m.groupValues[1].lowercase()
+                "${OPEN_ANG}$name${CLOSE_ANG}${m.groupValues[2]}${OPEN_ANG}/$name${CLOSE_ANG}"
+            }
         }
-        out.append(text, last, text.length)
-        return out.toString()
-            .replace("[", "").replace("]", "")
-            .replace('\u0000', '[').replace('\u0001', ']')
+        s = angleRegex.replace(s, "")
+        s = bracketRegex.replace(s) { m ->
+            val body = m.groupValues[1].trim()
+            if (body.isEmpty()) "" else "$OPEN_SQ$body$CLOSE_SQ"
+        }
+        return s
+            .replace("[", "").replace("]", "").replace("<", "").replace(">", "")
+            .replace(OPEN_SQ, '[').replace(CLOSE_SQ, ']')
+            .replace(OPEN_ANG, '<').replace(CLOSE_ANG, '>')
             .replace(spacesRegex, " ").trim()
     }
 
-    /** 文本里是否已经带有 Fish 内置标签（例如已优化过的文本被再次生成）。 */
+    /** 文本里是否已经带有标签（例如已优化过的文本被再次生成）。 */
     fun hasFishTags(text: String): Boolean =
-        tagRegex.findAll(text).any { it.groupValues[1].trim().lowercase() in allowed }
+        bracketRegex.containsMatchIn(text) || pairedRegex.containsMatchIn(text)
+
+    /** 去掉全部 [方向] 与 <标签>，只留要读出来的文字（复制到剪贴板用）。 */
+    fun plainText(text: String): String =
+        angleRegex.replace(bracketRegex.replace(text, " "), "")
+            .replace(Regex("\\s+"), " ").trim()
 
     /** LLM 输出可能带换行 / 多余空白，Fish 会读坏，压成单行。 */
     fun singleLine(text: String): String = text.replace(Regex("\\s+"), " ").trim()
 
     /** 去掉全部标签后是否还有可读内容（用来判断 LLM 输出是否可用）。 */
-    fun hasSpeakableText(text: String): Boolean = tagRegex.replace(text, "").isNotBlank()
+    fun hasSpeakableText(text: String): Boolean = plainText(text).isNotBlank()
 }

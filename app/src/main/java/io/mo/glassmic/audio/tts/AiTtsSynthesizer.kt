@@ -7,6 +7,7 @@ import io.mo.glassmic.R
 import io.mo.glassmic.data.config.AppLocale
 import io.mo.glassmic.data.config.ConfigStore
 import io.mo.glassmic.log.GlassLog
+import io.mo.glassmic.proto.FishTextMode
 import io.mo.glassmic.proto.TtsAiConfig
 import io.mo.glassmic.proto.TtsProvider
 import kotlinx.coroutines.CancellationException
@@ -252,15 +253,26 @@ class AiTtsSynthesizer @Inject constructor(
     // ============ Fish Audio /v1/tts ============
     private suspend fun fish(ai: TtsAiConfig, req: TtsRequest, sink: PcmSink) {
         val sampleRate = if (ai.sampleRate > 0) ai.sampleRate else 44_100
+        val model = ai.model.ifBlank { FISH_MODELS.first() }
+        val mode = ai.fishTextMode.takeIf { it != FishTextMode.UNRECOGNIZED } ?: FishTextMode.FISH_TEXT_READ
+        val input = req.text
         val text = when {
-            // 未开自动标签：只去 emoji，*…* 原样保留（可能是算式等正文，不当动作删）
-            !ai.fishAutoTag -> FishAutoTag.stripUnspeakable(req.text, actions = false).ifBlank { req.text }
-            // 文本里已有 Fish 标签（通常是上次优化后回填到输入框的结果）→ 直接合成，省掉一次 LLM 往返
-            FishAutoTag.hasFishTags(req.text) -> {
-                step(str(R.string.tts_step_already_tagged))
-                FishAutoTag.keepFishTags(FishAutoTag.singleLine(req.text))
+            // 照读且不加标签：只去 emoji，*…* 原样保留（可能是算式等正文，不当动作删）
+            mode == FishTextMode.FISH_TEXT_READ && !ai.fishAutoTag ->
+                FishAutoTag.stripUnspeakable(input, actions = false).ifBlank { input }
+            // 输入框里就是上次 LLM 的结果（已回填）→ 直接合成。
+            // 自动回复模式下尤其重要：否则再点一次生成会「回复自己的回复」
+            isLastLlmOutput(input) -> {
+                step(str(R.string.tts_step_already_processed))
+                FishAutoTag.keepFishTags(FishAutoTag.singleLine(input), model)
             }
-            else -> fishAutoTag(ai, req.text)
+            // 文本已带标签：要么是处理过的结果被改了几个字，要么是用户手写的标签 → 直接合成。
+            // 别人发来的消息一般不带标签，自动回复不受影响
+            FishAutoTag.hasFishTags(input) -> {
+                step(str(R.string.tts_step_already_tagged))
+                FishAutoTag.keepFishTags(FishAutoTag.singleLine(input), model)
+            }
+            else -> fishLlmPass(ai, input, mode, model)
         }
         val body = JSONObject()
             .put("text", text)
@@ -274,7 +286,6 @@ class AiTtsSynthesizer @Inject constructor(
             .put("chunk_length", 200)
         // 音色留空则不传 reference_id，由 Fish 使用默认音色
         ai.voice.trim().takeIf { it.isNotEmpty() }?.let { body.put("reference_id", it) }
-        val model = ai.model.ifBlank { FISH_MODELS.first() }
         val headers = linkedMapOf(
             "Content-Type" to "application/json",
             "Authorization" to "Bearer ${ai.apiKey}",
@@ -303,9 +314,8 @@ class AiTtsSynthesizer @Inject constructor(
 
     /**
      * 拉取 Fish 声音列表：[query] 为空时取自己账号下的声音，否则按名称搜索公开声音。
-     * 返回 (名称, 声音ID)。
      */
-    suspend fun fetchFishVoices(query: String): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+    suspend fun fetchFishVoices(query: String): List<FishVoice> = withContext(Dispatchers.IO) {
         val ai = configStore.current().tts.ai
         require(ai.apiKey.isNotBlank()) { str(R.string.ai_tts_fish_need_key) }
         val q = query.trim()
@@ -319,36 +329,62 @@ class AiTtsSynthesizer @Inject constructor(
             if (id.isEmpty()) return@mapNotNull null
             // 名称里的逗号 / 换行会打断「名称:ID」预设格式
             val title = o.optString("title").replace(Regex("[,，\\s]+"), " ").trim()
-            title.ifEmpty { id } to id
-        }.distinctBy { it.second }
+            FishVoice(
+                id = id,
+                title = title.ifEmpty { id },
+                coverUrl = o.optString("cover_image").trim(),
+                mine = q.isEmpty()
+            )
+        }.distinctBy { it.id }
+    }
+
+    /** 上一次 LLM 处理的结果（回填到了输入框）。再次以它为输入生成时跳过 LLM。 */
+    @Volatile private var lastLlmOutput: String? = null
+
+    private fun isLastLlmOutput(input: String): Boolean {
+        val last = lastLlmOutput ?: return false
+        return FishAutoTag.singleLine(input) == FishAutoTag.singleLine(last)
     }
 
     /**
-     * 用 OpenAI 兼容 LLM 给文本插入 Fish 内置标签。
-     * 未配置 key 或调用失败时退回原文（去掉 emoji / *动作*），不影响合成。
+     * 合成前的 LLM 步骤（OpenAI 兼容 /chat/completions）：按 [mode] 加标签 / 润色 / 生成回复。
+     * 照读与润色失败时退回原文，不影响合成；自动回复失败则报错——把对方的消息读出来不是想要的结果。
      */
-    private suspend fun fishAutoTag(ai: TtsAiConfig, input: String): String {
+    private suspend fun fishLlmPass(ai: TtsAiConfig, input: String, mode: FishTextMode, model: String): String {
+        val reply = mode == FishTextMode.FISH_TEXT_REPLY
         val fallback = FishAutoTag.stripUnspeakable(input).ifBlank { input }
         if (ai.llmApiKey.isBlank()) {
-            GlassLog.b("Tts") { "Fish 自动标签：未填写 LLM API Key，跳过" }
+            GlassLog.b("Tts") { "Fish LLM 步骤：未填写 LLM API Key，跳过" }
+            if (reply) error(str(R.string.tts_step_reply_needs_key))
             step(str(R.string.tts_step_llm_no_key))
             return fallback
         }
-        val model = ai.llmModel.ifBlank { "deepseek-chat" }
-        step(str(R.string.tts_step_llm_request, model))
+        val llmModel = ai.llmModel.ifBlank { "deepseek-chat" }
+        step(
+            str(
+                when (mode) {
+                    FishTextMode.FISH_TEXT_POLISH -> R.string.tts_step_llm_polish
+                    FishTextMode.FISH_TEXT_REPLY -> R.string.tts_step_llm_reply
+                    else -> R.string.tts_step_llm_request
+                },
+                llmModel
+            )
+        )
         val t0 = System.currentTimeMillis()
         return runCatching {
             val base = ai.llmEndpoint.ifBlank { "https://api.deepseek.com/v1" }.trimEnd('/')
             val url = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
+            val system = FishPrompts.systemPrompt(mode, model, ai.fishAutoTag, ai.fishHumanize, ai.personaPrompt)
             val body = JSONObject()
-                .put("model", model)
+                .put("model", llmModel)
                 .put(
                     "messages",
                     JSONArray()
-                        .put(JSONObject().put("role", "system").put("content", FishAutoTag.systemPrompt(ai.fishHumanize)))
+                        .put(JSONObject().put("role", "system").put("content", system))
                         .put(JSONObject().put("role", "user").put("content", input))
                 )
-                .put("temperature", LLM_TEMPERATURE)
+                // 加标签 / 润色要稳定少改写；回复需要一点变化，不然每次都一样
+                .put("temperature", if (reply) LLM_REPLY_TEMPERATURE else LLM_TEMPERATURE)
                 .put("max_tokens", 800)
                 .put("stream", false)
                 .toString()
@@ -360,19 +396,23 @@ class AiTtsSynthesizer @Inject constructor(
             val content = JSONObject(String(bytes, Charsets.UTF_8))
                 .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
                 ?.optString("content").orEmpty().trim().trim('"')
-            val tagged = FishAutoTag.keepFishTags(FishAutoTag.stripUnspeakable(FishAutoTag.singleLine(content)))
-            if (FishAutoTag.hasSpeakableText(tagged)) {
+            val cleaned = FishAutoTag.stripUnspeakable(FishAutoTag.singleLine(content))
+            val out = if (ai.fishAutoTag) FishAutoTag.keepFishTags(cleaned, model) else FishAutoTag.plainText(cleaned)
+            if (FishAutoTag.hasSpeakableText(out)) {
                 step(str(R.string.tts_step_llm_done, seconds(t0)))
-                progress.publishEnhanced(input, tagged)
-                tagged
+                lastLlmOutput = out
+                progress.publishEnhanced(input, out)
+                out
             } else {
+                if (reply) error(str(R.string.tts_step_llm_unusable))
                 step(str(R.string.tts_step_llm_unusable))
                 fallback
             }
         }.getOrElse {
             // 取消不算 LLM 失败：不能退回原文接着去请求 Fish
             if (it is CancellationException) throw it
-            GlassLog.b("Tts") { "Fish 自动标签失败，使用原文: ${it.message}" }
+            GlassLog.b("Tts") { "Fish LLM 步骤失败: ${it.message}" }
+            if (reply) throw it
             step(str(R.string.tts_step_llm_failed, it.message.orEmpty()))
             fallback
         }.also { GlassLog.b("Tts") { "Fish 文本: ${it.take(20)}" } }
@@ -489,12 +529,14 @@ class AiTtsSynthesizer @Inject constructor(
 
     private companion object {
         /** Fish model 头可选值，第一个为默认（免费版 S2.1 Pro）。 */
-        val FISH_MODELS = listOf("s2.1-pro-free", "s2.1-pro", "s2-pro", "s1")
+        val FISH_MODELS = listOf("s2.1-pro-free", "drama-3", "s2.1-pro", "s2-pro", "s1")
 
         /** Fish 合成温度：保留一定随机性，语气更自然。 */
         const val FISH_TEMPERATURE = 0.7
         /** 自动标签 LLM 温度：取低值，标签与措辞更稳定、少改写。 */
         const val LLM_TEMPERATURE = 0.2
+        /** 自动回复温度：比加标签高一些，回复不至于千篇一律。 */
+        const val LLM_REPLY_TEMPERATURE = 0.7
     }
 
     private fun readAll(input: InputStream): ByteArray {

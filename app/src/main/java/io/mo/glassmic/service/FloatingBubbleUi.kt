@@ -45,6 +45,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -70,6 +71,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -85,6 +87,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.mo.glassmic.R
 import io.mo.glassmic.audio.tts.TtsProgress
+import io.mo.glassmic.proto.FishTextMode
 import io.mo.glassmic.proto.PlaybackPolicy
 import io.mo.glassmic.ui.common.Dot
 import io.mo.glassmic.ui.common.GlassTextField
@@ -105,6 +108,8 @@ import java.io.File
 enum class FloatMode { BALL, MINI_BAR, MENU, TTS, TTS_SETTINGS }
 
 data class FloatGroupItem(val id: String, val emoji: String, val name: String)
+/** 悬浮窗音色下拉里的一项。 */
+data class FloatVoice(val id: String, val title: String, val coverUrl: String = "")
 data class FloatClipItem(val id: String, val name: String, val isCurrent: Boolean, val durationMs: Long = 0L)
 
 /** 展开态面板的默认宽度（设计稿 390 宽屏幕左右各留 14）。窄屏按可用宽度收缩。 */
@@ -168,11 +173,17 @@ fun FloatingBubbleRoot(
     panelHeightDp: Int = 0,
     onResizePanel: (widthDp: Int, heightDp: Int) -> Unit = { _, _ -> },
     fishMode: Boolean = false,
-    fishVoices: List<Pair<String, String>> = emptyList(),
+    fishVoices: List<FloatVoice> = emptyList(),
     fishVoiceId: String = "",
     onSelectFishVoice: (String) -> Unit = {},
     fishEnhance: Boolean = false,
     onToggleFishEnhance: (Boolean) -> Unit = {},
+    fishTextMode: FishTextMode = FishTextMode.FISH_TEXT_READ,
+    onSetFishTextMode: (FishTextMode) -> Unit = {},
+    voicesRefreshing: Boolean = false,
+    onRefreshVoices: (force: Boolean) -> Unit = {},
+    loadVoiceCover: suspend (String) -> ImageBitmap? = { null },
+    onCopyText: (String) -> Unit = {},
     ttsProgressLines: List<String> = emptyList(),
     ttsEnhanced: TtsProgress.Enhanced? = null,
 ) {
@@ -323,6 +334,12 @@ fun FloatingBubbleRoot(
                             onSelectFishVoice = onSelectFishVoice,
                             fishEnhance = fishEnhance,
                             onToggleFishEnhance = onToggleFishEnhance,
+                            fishTextMode = fishTextMode,
+                            onSetFishTextMode = onSetFishTextMode,
+                            voicesRefreshing = voicesRefreshing,
+                            onRefreshVoices = onRefreshVoices,
+                            loadVoiceCover = loadVoiceCover,
+                            onCopyText = onCopyText,
                             progressLines = ttsProgressLines
                         )
                     }
@@ -921,11 +938,17 @@ private fun TtsTab(
     delayRemainingMs: Long,
     onCancelDelayed: () -> Unit,
     fishMode: Boolean = false,
-    fishVoices: List<Pair<String, String>> = emptyList(),
+    fishVoices: List<FloatVoice> = emptyList(),
     fishVoiceId: String = "",
     onSelectFishVoice: (String) -> Unit = {},
     fishEnhance: Boolean = false,
     onToggleFishEnhance: (Boolean) -> Unit = {},
+    fishTextMode: FishTextMode = FishTextMode.FISH_TEXT_READ,
+    onSetFishTextMode: (FishTextMode) -> Unit = {},
+    voicesRefreshing: Boolean = false,
+    onRefreshVoices: (force: Boolean) -> Unit = {},
+    loadVoiceCover: suspend (String) -> ImageBitmap? = { null },
+    onCopyText: (String) -> Unit = {},
     progressLines: List<String> = emptyList(),
 ) {
     val t = glass
@@ -946,7 +969,12 @@ private fun TtsTab(
             selectedId = fishVoiceId,
             onSelectVoice = onSelectFishVoice,
             enhance = fishEnhance,
-            onToggleEnhance = onToggleFishEnhance
+            onToggleEnhance = onToggleFishEnhance,
+            mode = fishTextMode,
+            onSetMode = onSetFishTextMode,
+            refreshing = voicesRefreshing,
+            onRefresh = onRefreshVoices,
+            loadCover = loadVoiceCover
         )
     }
 
@@ -965,20 +993,16 @@ private fun TtsTab(
             modifier = Modifier.weight(1f)
         )
         if (text.isNotEmpty()) {
-            Box(
-                Modifier
-                    .height(30.dp)
-                    .clip(RoundedCornerShape(15.dp))
-                    .background(t.fill)
-                    .clickable { onTextChange("") }
-                    .padding(horizontal = 12.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    stringResource(R.string.float_tts_clear),
-                    fontSize = 12.sp, fontWeight = FontWeight.Medium, color = t.ink2
-                )
+            // 复制：去掉 [方向] / <标签> 后的纯文字；按下后短暂显示「已复制」
+            var copied by remember { mutableStateOf(false) }
+            LaunchedEffect(copied) {
+                if (copied) { kotlinx.coroutines.delay(1_500); copied = false }
             }
+            SmallPill(stringResource(if (copied) R.string.float_tts_copied else R.string.float_tts_copy)) {
+                onCopyText(text); copied = true
+            }
+            Spacer(Modifier.width(6.dp))
+            SmallPill(stringResource(R.string.float_tts_clear)) { onTextChange("") }
             Spacer(Modifier.width(6.dp))
         }
         Box(
@@ -1087,27 +1111,124 @@ private fun GenerateLog(lines: List<String>, generating: Boolean) {
     }
 }
 
-/** 音色预设按钮（未配置预设时不显示）；当前音色不在预设里时多一个选中的「自定义」。 */
+@Composable
+private fun SmallPill(label: String, onClick: () -> Unit) {
+    val t = glass
+    Box(
+        Modifier
+            .height(30.dp)
+            .clip(RoundedCornerShape(15.dp))
+            .background(t.fill)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = t.ink2, maxLines = 1)
+    }
+}
+
+/**
+ * Fish 选项：文本模式（照读 / 润色 / 回复）、音色下拉（封面 + 名称，展开在面板内，不用弹窗）、
+ * 「优化文本」（自动标签）开关。
+ */
 @Composable
 private fun FishOptions(
-    voices: List<Pair<String, String>>,
+    voices: List<FloatVoice>,
     selectedId: String,
     onSelectVoice: (String) -> Unit,
     enhance: Boolean,
     onToggleEnhance: (Boolean) -> Unit,
+    mode: FishTextMode,
+    onSetMode: (FishTextMode) -> Unit,
+    refreshing: Boolean,
+    onRefresh: (force: Boolean) -> Unit,
+    loadCover: suspend (String) -> ImageBitmap?,
 ) {
     val t = glass
-    if (voices.isNotEmpty()) {
-        val custom = selectedId.isNotBlank() && voices.none { it.second == selectedId }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.float_tts_voice), fontSize = 12.sp, color = t.ink3)
+    Segmented(
+        options = listOf(
+            FishTextMode.FISH_TEXT_READ to stringResource(R.string.fish_mode_read),
+            FishTextMode.FISH_TEXT_POLISH to stringResource(R.string.fish_mode_polish),
+            FishTextMode.FISH_TEXT_REPLY to stringResource(R.string.fish_mode_reply)
+        ),
+        selected = mode,
+        onSelect = onSetMode,
+        height = 32.dp,
+        fontSize = 12.sp
+    )
+
+    var open by remember { mutableStateOf(false) }
+    val current = voices.firstOrNull { it.id == selectedId }
+    val customLabel = stringResource(R.string.float_tts_voice_custom)
+    val defaultLabel = stringResource(R.string.float_tts_voice_default)
+    val currentTitle = current?.title ?: if (selectedId.isBlank()) defaultLabel else customLabel
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.float_tts_voice), fontSize = 12.sp, color = t.ink3)
+        Spacer(Modifier.width(8.dp))
+        Row(
+            Modifier
+                .weight(1f)
+                .height(36.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(if (open) t.primarySoft else t.fill)
+                .clickable { open = !open; if (open) onRefresh(false) }
+                .padding(start = 6.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            VoiceAvatar(currentTitle, current?.coverUrl.orEmpty(), 26.dp, loadCover)
             Spacer(Modifier.width(8.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(voices, key = { it.second }) { (label, id) ->
-                    VoiceChip(label, selected = id == selectedId) { onSelectVoice(id) }
-                }
-                if (custom) item { VoiceChip(stringResource(R.string.float_tts_voice_custom), selected = true) {} }
+            Text(
+                currentTitle, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
+            )
+            Text(if (open) "▴" else "▾", fontSize = 12.sp, color = t.ink3)
+        }
+    }
+    if (open) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(t.fill)
+                .heightIn(max = 240.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 4.dp)
+        ) {
+            if (voices.isEmpty()) {
+                Text(
+                    stringResource(if (refreshing) R.string.ai_tts_fish_fetching else R.string.float_tts_no_voices),
+                    fontSize = 12.sp, lineHeight = 17.sp, color = t.ink3,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                )
             }
+            voices.forEach { v ->
+                val on = v.id == selectedId
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(if (on) t.primarySoft else Color.Transparent)
+                        .clickable { onSelectVoice(v.id); open = false }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    VoiceAvatar(v.title, v.coverUrl, 30.dp, loadCover)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        v.title, fontSize = 13.sp,
+                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (on) t.primaryInk else t.ink,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Text(
+                stringResource(if (refreshing) R.string.ai_tts_fish_fetching else R.string.float_tts_voice_refresh),
+                fontSize = 12.sp, color = t.ink3,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !refreshing) { onRefresh(true) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            )
         }
     }
     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1116,21 +1237,27 @@ private fun FishOptions(
     }
 }
 
+/** 圆形音色头像：有封面显示封面，否则显示名称首字。 */
 @Composable
-private fun VoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun VoiceAvatar(title: String, coverUrl: String, size: Dp, load: suspend (String) -> ImageBitmap?) {
     val t = glass
-    Text(
-        label,
-        fontSize = 12.sp,
-        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-        color = if (selected) t.primaryInk else t.ink2,
-        maxLines = 1,
-        modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) t.primarySoft else t.fill)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp)
-    )
+    val img by produceState<ImageBitmap?>(initialValue = null, coverUrl) {
+        value = if (coverUrl.isBlank()) null else runCatching { load(coverUrl) }.getOrNull()
+    }
+    Box(
+        Modifier.size(size).clip(CircleShape).background(t.primarySoft),
+        contentAlignment = Alignment.Center
+    ) {
+        val bmp = img
+        if (bmp != null) {
+            Image(bmp, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
+        } else {
+            Text(
+                title.trim().take(1).uppercase(),
+                fontSize = (size.value * 0.42f).sp, fontWeight = FontWeight.SemiBold, color = t.primaryInk
+            )
+        }
+    }
 }
 
 @Composable

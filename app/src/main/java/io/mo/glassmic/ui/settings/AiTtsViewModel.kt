@@ -12,7 +12,10 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.mo.glassmic.R
 import io.mo.glassmic.audio.tts.AiTtsSynthesizer
+import io.mo.glassmic.audio.tts.FishVoice
+import io.mo.glassmic.audio.tts.FishVoiceRepository
 import io.mo.glassmic.audio.tts.FishVoices
+import io.mo.glassmic.proto.FishTextMode
 import io.mo.glassmic.audio.tts.PcmSink
 import io.mo.glassmic.audio.tts.TtsRequest
 import io.mo.glassmic.data.audio.SampleImport
@@ -59,7 +62,7 @@ sealed interface TtsModelsState {
 sealed interface FishVoicesState {
     data object Idle : FishVoicesState
     data object Loading : FishVoicesState
-    data class Loaded(val voices: List<Pair<String, String>>) : FishVoicesState
+    data class Loaded(val voices: List<FishVoice>) : FishVoicesState
     data class Error(val message: String) : FishVoicesState
 }
 
@@ -78,7 +81,8 @@ class AiTtsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val configStore: ConfigStore,
     private val aiTts: AiTtsSynthesizer,
-    private val cloneSampleStore: TtsCloneSampleStore
+    private val cloneSampleStore: TtsCloneSampleStore,
+    private val fishVoiceRepo: FishVoiceRepository
 ) : ViewModel() {
 
     /** 当前 AI 配置，UI collect。 */
@@ -105,6 +109,8 @@ class AiTtsViewModel @Inject constructor(
     fun setLlmApiKey(v: String) = updateAi { it.llmApiKey = v }
     fun setLlmModel(v: String) = updateAi { it.llmModel = v }
     fun setFishVoices(v: String) = updateAi { it.fishVoices = v }
+    fun setFishTextMode(v: FishTextMode) = updateAi { it.fishTextMode = v }
+    fun setPersonaPrompt(v: String) = updateAi { it.personaPrompt = v }
 
     // ---- Fish 声音列表 ----
     private val _fishVoiceResults = MutableStateFlow<FishVoicesState>(FishVoicesState.Idle)
@@ -126,8 +132,12 @@ class AiTtsViewModel @Inject constructor(
     fun dismissFishVoices() { _fishVoiceResults.value = FishVoicesState.Idle }
 
     /** 选中一个声音：设为当前音色，并加入音色预设（悬浮窗可快速切换）。 */
-    fun pickFishVoice(name: String, id: String) {
+    fun pickFishVoice(voice: FishVoice) {
         dismissFishVoices()
+        // 记下名字和封面，悬浮窗下拉里才能显示
+        fishVoiceRepo.remember(voice)
+        val name = voice.title
+        val id = voice.id
         updateAi { b ->
             val presets = FishVoices.parse(b.fishVoices)
             if (presets.none { it.second == id }) {

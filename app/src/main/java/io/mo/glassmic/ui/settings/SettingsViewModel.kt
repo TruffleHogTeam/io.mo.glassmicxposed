@@ -15,6 +15,7 @@ import io.mo.glassmic.data.runtime.HookStatusRepository
 import io.mo.glassmic.data.runtime.VisibilityCompatRepository
 import kotlinx.coroutines.flow.asStateFlow
 import io.mo.glassmic.log.GlassLog
+import io.mo.glassmic.R
 import io.mo.glassmic.data.config.AppLocale
 import io.mo.glassmic.proto.AppConfig
 import io.mo.glassmic.proto.InjectionBackend
@@ -61,8 +62,28 @@ class SettingsViewModel @Inject constructor(
     private val runtime: RuntimeStateHolder,
     private val bundler: io.mo.glassmic.data.diag.DiagnosticBundler,
     private val backgrounds: io.mo.glassmic.data.appearance.BackgroundStore,
+    private val settingsBackup: io.mo.glassmic.data.config.SettingsBackup,
     hookStatusRepo: HookStatusRepository
 ) : ViewModel() {
+
+    // ---- 设置导出 / 导入 ----
+    private val _backupMessage = MutableStateFlow<String?>(null)
+    val backupMessage: StateFlow<String?> = _backupMessage.asStateFlow()
+    fun consumeBackupMessage() { _backupMessage.value = null }
+
+    fun exportSettings(uri: android.net.Uri) = viewModelScope.launch {
+        _backupMessage.value = runCatching { settingsBackup.export(uri) }.fold(
+            onSuccess = { AppLocale.string(context, R.string.settings_backup_exported) },
+            onFailure = { AppLocale.string(context, R.string.settings_backup_failed, it.message.orEmpty()) }
+        )
+    }
+
+    fun importSettings(uri: android.net.Uri) = viewModelScope.launch {
+        _backupMessage.value = runCatching { settingsBackup.import(uri) }.fold(
+            onSuccess = { AppLocale.string(context, R.string.settings_backup_imported) },
+            onFailure = { AppLocale.string(context, R.string.settings_backup_failed, it.message.orEmpty()) }
+        )
+    }
 
     private val _exporting = MutableStateFlow(false)
     val exporting: StateFlow<Boolean> = _exporting.asStateFlow()
