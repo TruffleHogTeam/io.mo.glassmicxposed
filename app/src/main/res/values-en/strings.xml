@@ -558,8 +558,12 @@
     <string name="float_llm_temperature_hint">Lower = steadier tags and wording, higher = more varied replies. Auto uses 0.2 for Read and Polish, 0.7 for Reply.</string>
     <string name="float_llm_temperature_auto">Auto</string>
     <string name="float_tts_model">Model</string>
-    <string name="float_tts_credit">Credits %1$s</string>
+    <string name="float_tts_credit">API %1$s</string>
     <string name="float_tts_save_library">Save to library</string>
-    <string name="float_tts_saved">Saved to library</string>
     <string name="float_tts_save_new_group">+ New TTS group</string>
+    <string name="float_tts_save_change_group">Change group</string>
+    <string name="float_tts_saved_to">Saved to %1$s</string>
+    <string name="float_tts_save_failed">Save failed: %1$s</string>
+    <string name="float_tts_save_regenerate">Nothing to save. Generate the clip again, then save.</string>
+    <string name="float_tts_plan_credit">Plan %1$s / %2$s</string>
 </resources>

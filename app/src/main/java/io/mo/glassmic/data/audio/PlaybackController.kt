@@ -222,16 +222,28 @@ class PlaybackController @Inject constructor(
         }
     }
 
+    /** [saveGeneratedTts] 的结果。 */
+    sealed interface TtsSaveResult {
+        data class Saved(val groupId: String, val groupName: String) : TtsSaveResult
+        /** 没有可存的语音（还没生成，或内存紧张时缓存已被释放）。 */
+        data object NothingToSave : TtsSaveResult
+        data class Failed(val message: String) : TtsSaveResult
+    }
+
     /**
      * 把最近一次生成的语音存进音频库。[groupId] 为空或分组已不存在时新建一个「TTS」分组。
-     * 返回存入的分组 ID，没有可存的语音时返回 null。
      */
-    suspend fun saveGeneratedTts(groupId: String?, name: String): String? = withContext(Dispatchers.IO) {
-        val pcm = generatedTtsPcm ?: return@withContext null
-        val gid = groupId?.takeIf { dao.findGroup(it) != null }
-            ?: importRepo.createGroup("TTS", "🗣️", null).id
-        importRepo.importPcm(pcm, MASTER_SAMPLE_RATE, MASTER_CHANNELS, gid, name.take(40))
-        gid
+    suspend fun saveGeneratedTts(groupId: String?, name: String): TtsSaveResult = withContext(Dispatchers.IO) {
+        val pcm = generatedTtsPcm ?: return@withContext TtsSaveResult.NothingToSave
+        runCatching {
+            val group = groupId?.let { dao.findGroup(it) }
+                ?: importRepo.createGroup("TTS", "🗣️", null)
+            importRepo.importPcm(pcm, MASTER_SAMPLE_RATE, MASTER_CHANNELS, group.id, name.take(40))
+            TtsSaveResult.Saved(group.id, group.name)
+        }.getOrElse {
+            GlassLog.b("Playback") { "TTS 存入音频库失败: ${it.message}" }
+            TtsSaveResult.Failed(it.message ?: it.javaClass.simpleName)
+        }
     }
 
     private val _ttsDelayRemainingMs = MutableStateFlow(0L)

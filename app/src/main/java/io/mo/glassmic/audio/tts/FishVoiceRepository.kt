@@ -26,6 +26,13 @@ import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Fish 账户额度：API 余额（应用调用扣这里）与套餐额度（网站上的已用 / 总额），任一项取不到为 null。 */
+data class FishCredits(
+    val apiCredit: String? = null,
+    val planTotal: Double? = null,
+    val planBalance: Double? = null
+)
+
 /** 一个 Fish 声音。[mine] 表示来自自己账号（「我的声音」），否则是搜索后选用过的公开声音。 */
 data class FishVoice(
     val id: String,
@@ -63,9 +70,9 @@ class FishVoiceRepository @Inject constructor(
     /** 已尝试按 ID 查询过的声音（成功或失败都记下，避免反复请求）。 */
     private val lookedUp = java.util.Collections.synchronizedSet(HashSet<String>())
 
-    private val _credit = MutableStateFlow<String?>(null)
-    /** Fish API 余额（未查询 / 查询失败时为 null）。 */
-    val credit: StateFlow<String?> = _credit.asStateFlow()
+    private val _credit = MutableStateFlow<FishCredits?>(null)
+    /** Fish 额度（未查询时为 null）。 */
+    val credit: StateFlow<FishCredits?> = _credit.asStateFlow()
     @Volatile private var lastCreditMs = 0L
 
     /** 刷新余额。[force] 为 false 时 30 秒内只查一次（生成完成后会强制刷新）。 */
@@ -74,9 +81,16 @@ class FishVoiceRepository @Inject constructor(
         if (!force && now - lastCreditMs < CREDIT_INTERVAL_MS) return
         lastCreditMs = now
         scope.launch {
-            runCatching { aiTts.fetchFishCredit() }
-                .onSuccess { _credit.value = it }
-                .onFailure { GlassLog.b("Tts") { "Fish 余额查询失败: ${it.message}" } }
+            // 两个接口各查各的，一个失败不影响另一个显示
+            val api = runCatching { aiTts.fetchFishCredit() }
+                .onFailure { GlassLog.b("Tts") { "Fish API 余额查询失败: ${it.message}" } }
+                .getOrNull()
+            val plan = runCatching { aiTts.fetchFishPackage() }
+                .onFailure { GlassLog.b("Tts") { "Fish 套餐额度查询失败: ${it.message}" } }
+                .getOrNull()
+            if (api != null || plan != null) {
+                _credit.value = FishCredits(api, plan?.first, plan?.second)
+            }
         }
     }
 

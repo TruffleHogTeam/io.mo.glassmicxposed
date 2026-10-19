@@ -454,6 +454,23 @@ class AiTtsSynthesizer @Inject constructor(
         JSONObject(String(bytes, Charsets.UTF_8)).optString("credit").takeIf { it.isNotBlank() }
     }
 
+    /**
+     * 套餐（平台）额度：GET /wallet/self/package → (total, balance)。与 API 余额是两套账，
+     * 网站上看到的「已用 / 总额」就是这里。字段可能是数字或字符串，取不到时为 null。
+     */
+    suspend fun fetchFishPackage(): Pair<Double?, Double?>? = withContext(Dispatchers.IO) {
+        val ai = configStore.current().tts.ai
+        if (ai.apiKey.isBlank()) return@withContext null
+        val bytes = httpGet("${fishBase(ai)}/wallet/self/package", mapOf("Authorization" to "Bearer ${ai.apiKey}"))
+        val o = JSONObject(String(bytes, Charsets.UTF_8))
+        fun num(key: String): Double? = when (val v = o.opt(key)) {
+            is Number -> v.toDouble()
+            is String -> v.toDoubleOrNull()
+            else -> null
+        }
+        num("total") to num("balance")
+    }
+
     private fun str(resId: Int, vararg args: Any): String = AppLocale.string(context, resId, *args)
 
     private fun seconds(sinceMs: Long): Double = (System.currentTimeMillis() - sinceMs) / 1000.0

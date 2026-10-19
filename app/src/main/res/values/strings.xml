@@ -558,8 +558,12 @@
     <string name="float_llm_temperature_hint">越低标签和措辞越稳定，越高回复越多变。自动：照读和润色用 0.2，回复用 0.7。</string>
     <string name="float_llm_temperature_auto">自动</string>
     <string name="float_tts_model">模型</string>
-    <string name="float_tts_credit">余额 %1$s</string>
+    <string name="float_tts_credit">API %1$s</string>
     <string name="float_tts_save_library">存入音频库</string>
-    <string name="float_tts_saved">已存入音频库</string>
     <string name="float_tts_save_new_group">+ 新建 TTS 分组</string>
+    <string name="float_tts_save_change_group">换分组</string>
+    <string name="float_tts_saved_to">已存入 %1$s</string>
+    <string name="float_tts_save_failed">保存失败：%1$s</string>
+    <string name="float_tts_save_regenerate">没有可保存的语音，请重新生成后再保存。</string>
+    <string name="float_tts_plan_credit">套餐 %1$s / %2$s</string>
 </resources>

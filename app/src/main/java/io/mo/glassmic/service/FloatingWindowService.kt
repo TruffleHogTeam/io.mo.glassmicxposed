@@ -48,6 +48,7 @@ import io.mo.glassmic.audio.tts.FishVoices
 import io.mo.glassmic.audio.tts.TtsProgress
 import io.mo.glassmic.ui.theme.GlassThemeContent
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -263,6 +264,7 @@ class FloatingWindowService : LifecycleService() {
                 val knownVoices by fishVoiceRepo.voices.collectAsState()
                 val voicesRefreshing by fishVoiceRepo.refreshing.collectAsState()
                 val fishCredit by fishVoiceRepo.credit.collectAsState()
+                val saveStatus by saveStatusFlow.collectAsState()
                 val fishOn = cfg.tts.ai.enabled && cfg.tts.ai.provider == TtsProvider.FISH
                 // 预设和当前音色里不在「我的声音」中的 ID（手填的、网站收藏的）按 ID 查名称和封面
                 LaunchedEffect(fishOn, cfg.tts.ai.fishVoices, cfg.tts.ai.voice) {
@@ -353,7 +355,8 @@ class FloatingWindowService : LifecycleService() {
                     fishModel = cfg.tts.ai.model,
                     onSelectFishModel = { id -> updateFishAi { it.model = id } },
                     fishCredit = if (fishOn) fishCredit else null,
-                    onSaveTts = { gid -> onSaveTts(gid) },
+                    onSaveTts = { gid, auto -> onSaveTts(gid, auto) },
+                    saveStatus = saveStatus,
                     llmTemperature = cfg.tts.ai.let { if (it.hasLlmTemperature()) it.llmTemperature else -1f },
                     onSetLlmTemperature = { v ->
                         updateFishAi { if (v < 0f) { it.clearLlmTemperature() } else { it.llmTemperature = v } }
@@ -434,13 +437,43 @@ class FloatingWindowService : LifecycleService() {
         return presets + rest
     }
 
-    private fun onSaveTts(groupId: String?) {
+    /** 上次存入的分组：再点「存入音频库」直接存到这里。 */
+    @Volatile private var lastSaveGroupId: String? = null
+    private val saveStatusFlow = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    private var saveStatusJob: Job? = null
+
+    /**
+     * [groupId] 为 null 表示新建「TTS」分组。[auto] 为 true 时（直接点按钮）优先存到上次的分组，
+     * 其次是已有的「TTS」分组；都没有时新建。
+     */
+    private fun onSaveTts(groupId: String?, auto: Boolean) {
         lifecycleScope.launch {
+            val target = if (!auto) groupId else {
+                val groups = audioDao.observeGroups().first()
+                lastSaveGroupId?.takeIf { id -> groups.any { it.id == id } }
+                    ?: groups.firstOrNull { it.name == "TTS" }?.id
+            }
             val name = FishAutoTag.plainText(playback.lastGeneratedText).take(40).ifBlank { "TTS" }
-            val gid = runCatching { playback.saveGeneratedTts(groupId, name) }
-                .onFailure { GlassLog.b("Float") { "TTS 存入音频库失败: ${it.message}" } }
-                .getOrNull()
-            if (gid == null) GlassLog.b("Float") { "TTS 存入音频库失败（没有已生成的语音）" }
+            GlassLog.b("Float") { "TTS 存入音频库: group=${target ?: "(新建 TTS)"} name=$name" }
+            val msg = when (val r = playback.saveGeneratedTts(target, name)) {
+                is PlaybackController.TtsSaveResult.Saved -> {
+                    lastSaveGroupId = r.groupId
+                    GlassLog.b("Float") { "TTS 已存入音频库: ${r.groupName}" }
+                    AppLocale.string(this@FloatingWindowService, R.string.float_tts_saved_to, r.groupName)
+                }
+                PlaybackController.TtsSaveResult.NothingToSave -> {
+                    GlassLog.b("Float") { "TTS 存入音频库失败：没有已生成的语音" }
+                    AppLocale.string(this@FloatingWindowService, R.string.float_tts_save_regenerate)
+                }
+                is PlaybackController.TtsSaveResult.Failed ->
+                    AppLocale.string(this@FloatingWindowService, R.string.float_tts_save_failed, r.message)
+            }
+            saveStatusFlow.value = msg
+            saveStatusJob?.cancel()
+            saveStatusJob = lifecycleScope.launch {
+                kotlinx.coroutines.delay(3_000)
+                saveStatusFlow.value = null
+            }
         }
     }
 
