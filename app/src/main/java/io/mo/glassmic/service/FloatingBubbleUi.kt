@@ -86,6 +86,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.mo.glassmic.R
+import io.mo.glassmic.audio.tts.FishCredits
 import io.mo.glassmic.audio.tts.TtsProgress
 import io.mo.glassmic.proto.FishTextMode
 import io.mo.glassmic.proto.PlaybackPolicy
@@ -186,9 +187,10 @@ fun FloatingBubbleRoot(
     onCopyText: (String) -> Unit = {},
     fishModel: String = "",
     onSelectFishModel: (String) -> Unit = {},
-    fishCredit: String? = null,
-    onSaveTts: (groupId: String?) -> Unit = {},
+    fishCredit: FishCredits? = null,
+    onSaveTts: (groupId: String?, auto: Boolean) -> Unit = { _, _ -> },
     saveGroups: List<FloatGroupItem> = emptyList(),
+    saveStatus: String? = null,
     ttsProgressLines: List<String> = emptyList(),
     ttsEnhanced: TtsProgress.Enhanced? = null,
     llmTemperature: Float = -1f,
@@ -352,6 +354,7 @@ fun FloatingBubbleRoot(
                             fishCredit = fishCredit,
                             onSaveTts = onSaveTts,
                             saveGroups = groups,
+                            saveStatus = saveStatus,
                             progressLines = ttsProgressLines
                         )
                     }
@@ -966,9 +969,10 @@ private fun TtsTab(
     onCopyText: (String) -> Unit = {},
     fishModel: String = "",
     onSelectFishModel: (String) -> Unit = {},
-    fishCredit: String? = null,
-    onSaveTts: (groupId: String?) -> Unit = {},
+    fishCredit: FishCredits? = null,
+    onSaveTts: (groupId: String?, auto: Boolean) -> Unit = { _, _ -> },
     saveGroups: List<FloatGroupItem> = emptyList(),
+    saveStatus: String? = null,
     progressLines: List<String> = emptyList(),
 ) {
     val t = glass
@@ -1089,7 +1093,7 @@ private fun TtsTab(
 
     // 生成好的语音存进音频库：选一个分组（没有分组时新建「TTS」分组）
     if (ready && !generating) {
-        SaveToLibrary(saveGroups, onSaveTts)
+        SaveToLibrary(saveGroups, onSaveTts, saveStatus)
     }
 
     // 进度条：开启后，生成就绪或正在播放时显示
@@ -1112,25 +1116,30 @@ private fun TtsTab(
     }
 }
 
+/**
+ * 存入音频库：一键存到上次的分组，其次是已有的「TTS」分组，都没有时新建「TTS」分组。
+ * 「换分组」可选择其它分组或新建。
+ */
 @Composable
-private fun SaveToLibrary(groups: List<FloatGroupItem>, onSave: (String?) -> Unit) {
+private fun SaveToLibrary(groups: List<FloatGroupItem>, onSave: (String?, Boolean) -> Unit, status: String?) {
     val t = glass
-    var open by remember { mutableStateOf(false) }
-    var saved by remember { mutableStateOf(false) }
-    LaunchedEffect(saved) {
-        if (saved) { kotlinx.coroutines.delay(2_000); saved = false }
-    }
+    var choose by remember { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        SmallPill(
-            stringResource(
-                when {
-                    saved -> R.string.float_tts_saved
-                    else -> R.string.float_tts_save_library
-                }
+        // 一键存：上次的分组 → 已有的「TTS」分组 → 新建「TTS」分组（由服务端挑选）
+        SmallPill(stringResource(R.string.float_tts_save_library)) { onSave(null, true); choose = false }
+        if (groups.isNotEmpty()) {
+            Spacer(Modifier.width(10.dp))
+            Text(
+                stringResource(R.string.float_tts_save_change_group),
+                fontSize = 12.sp, color = t.ink3,
+                modifier = Modifier.clickable { choose = !choose }.padding(vertical = 6.dp)
             )
-        ) { if (!saved) open = !open }
+        }
     }
-    if (open) {
+    if (status != null) {
+        Text(status, fontSize = 12.sp, lineHeight = 17.sp, color = t.ink2)
+    }
+    if (choose) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(groups, key = { it.id }) { g ->
                 Text(
@@ -1139,7 +1148,7 @@ private fun SaveToLibrary(groups: List<FloatGroupItem>, onSave: (String?) -> Uni
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
                         .background(t.fill)
-                        .clickable { onSave(g.id); open = false; saved = true }
+                        .clickable { onSave(g.id, false); choose = false }
                         .padding(horizontal = 12.dp, vertical = 7.dp)
                 )
             }
@@ -1150,13 +1159,34 @@ private fun SaveToLibrary(groups: List<FloatGroupItem>, onSave: (String?) -> Uni
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
                         .background(t.primarySoft)
-                        .clickable { onSave(null); open = false; saved = true }
+                        .clickable { onSave(null, false); choose = false }
                         .padding(horizontal = 12.dp, vertical = 7.dp)
                 )
             }
         }
     }
 }
+
+/** 额度行：套餐「已用 / 总额」与 API 余额，各自取不到就不显示。 */
+@Composable
+private fun CreditsLine(credit: FishCredits?) {
+    val t = glass
+    credit ?: return
+    val parts = buildList {
+        val total = credit.planTotal
+        val balance = credit.planBalance
+        if (total != null && balance != null && total > 0) {
+            add(stringResource(R.string.float_tts_plan_credit, formatAmount(total - balance), formatAmount(total)))
+        }
+        credit.apiCredit?.let { add(stringResource(R.string.float_tts_credit, formatCredit(it))) }
+    }
+    if (parts.isNotEmpty()) {
+        Text(parts.joinToString("  ·  "), fontSize = 12.sp, color = t.ink3, fontFamily = MonoFamily)
+    }
+}
+
+private fun formatAmount(v: Double): String =
+    if (v % 1.0 == 0.0) v.toLong().toString() else "%.2f".format(v)
 
 /** 余额显示：保留两位小数，解析失败原样显示。 */
 private fun formatCredit(raw: String): String =
@@ -1230,37 +1260,62 @@ private fun FishOptions(
     loadCover: suspend (String) -> ImageBitmap?,
     model: String,
     onSelectModel: (String) -> Unit,
-    credit: String?,
+    credit: FishCredits?,
 ) {
     val t = glass
-    // 模型切换：常用 Fish 模型 + 手填的自定义模型；右侧显示余额
+    // 模型下拉：常用 Fish 模型 + 手填的自定义模型（面板内展开，不用弹窗）；右侧显示额度
     val selectedModel = model.ifBlank { FISH_MODEL_CHIPS.first().first }
-    val chips = FISH_MODEL_CHIPS.let { list ->
+    val models = FISH_MODEL_CHIPS.let { list ->
         if (list.any { it.first == selectedModel }) list else list + (selectedModel to selectedModel)
     }
+    var modelsOpen by remember { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(stringResource(R.string.float_tts_model), fontSize = 12.sp, color = t.ink3, modifier = Modifier.weight(1f))
-        if (credit != null) {
-            Text(stringResource(R.string.float_tts_credit, formatCredit(credit)), fontSize = 12.sp, color = t.ink3, fontFamily = MonoFamily)
-        }
-    }
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        items(chips, key = { it.first }) { (id, label) ->
-            val on = id == selectedModel
+        Text(stringResource(R.string.float_tts_model), fontSize = 12.sp, color = t.ink3)
+        Spacer(Modifier.width(8.dp))
+        Row(
+            Modifier
+                .weight(1f)
+                .height(32.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (modelsOpen) t.primarySoft else t.fill)
+                .clickable { modelsOpen = !modelsOpen }
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
-                label,
-                fontSize = 12.sp,
-                fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (on) t.primaryInk else t.ink2,
-                maxLines = 1,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(if (on) t.primarySoft else t.fill)
-                    .clickable { onSelectModel(id) }
-                    .padding(horizontal = 12.dp, vertical = 7.dp)
+                models.firstOrNull { it.first == selectedModel }?.second ?: selectedModel,
+                fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
             )
+            Text(if (modelsOpen) "▴" else "▾", fontSize = 12.sp, color = t.ink3)
         }
     }
+    if (modelsOpen) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(t.fill)
+                .padding(vertical = 4.dp)
+        ) {
+            models.forEach { (id, label) ->
+                val on = id == selectedModel
+                Text(
+                    label,
+                    fontSize = 13.sp,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (on) t.primaryInk else t.ink,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(if (on) t.primarySoft else Color.Transparent)
+                        .clickable { onSelectModel(id); modelsOpen = false }
+                        .padding(horizontal = 12.dp, vertical = 9.dp)
+                )
+            }
+        }
+    }
+    CreditsLine(credit)
     Segmented(
         options = listOf(
             FishTextMode.FISH_TEXT_READ to stringResource(R.string.fish_mode_read),
