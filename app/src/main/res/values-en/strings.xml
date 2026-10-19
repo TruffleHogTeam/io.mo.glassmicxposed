@@ -554,4 +554,12 @@
     <string name="settings_backup_exported">Settings exported. The file contains your API keys, so keep it private.</string>
     <string name="settings_backup_imported">Settings imported</string>
     <string name="settings_backup_failed">Backup failed: %1$s</string>
+    <string name="float_llm_temperature">LLM temperature</string>
+    <string name="float_llm_temperature_hint">Lower = steadier tags and wording, higher = more varied replies. Auto uses 0.2 for Read and Polish, 0.7 for Reply.</string>
+    <string name="float_llm_temperature_auto">Auto</string>
+    <string name="float_tts_model">Model</string>
+    <string name="float_tts_credit">Credits %1$s</string>
+    <string name="float_tts_save_library">Save to library</string>
+    <string name="float_tts_saved">Saved to library</string>
+    <string name="float_tts_save_new_group">+ New TTS group</string>
 </resources>

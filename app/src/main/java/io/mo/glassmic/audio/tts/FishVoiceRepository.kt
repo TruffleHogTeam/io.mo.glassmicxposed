@@ -60,6 +60,42 @@ class FishVoiceRepository @Inject constructor(
 
     @Volatile private var lastRefreshMs = 0L
 
+    /** 已尝试按 ID 查询过的声音（成功或失败都记下，避免反复请求）。 */
+    private val lookedUp = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    private val _credit = MutableStateFlow<String?>(null)
+    /** Fish API 余额（未查询 / 查询失败时为 null）。 */
+    val credit: StateFlow<String?> = _credit.asStateFlow()
+    @Volatile private var lastCreditMs = 0L
+
+    /** 刷新余额。[force] 为 false 时 30 秒内只查一次（生成完成后会强制刷新）。 */
+    fun refreshCredit(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastCreditMs < CREDIT_INTERVAL_MS) return
+        lastCreditMs = now
+        scope.launch {
+            runCatching { aiTts.fetchFishCredit() }
+                .onSuccess { _credit.value = it }
+                .onFailure { GlassLog.b("Tts") { "Fish 余额查询失败: ${it.message}" } }
+        }
+    }
+
+    /**
+     * 确保这些声音 ID 的名称和封面已知：「我的声音」列表只含自己克隆的声音，
+     * 手填的 ID、在 Fish 网站收藏的声音不在其中，这里按 ID 逐个查询 GET /model/{id} 后记住。
+     */
+    fun ensureKnown(ids: Collection<String>) {
+        val missing = ids.map { it.trim() }.filter { it.isNotEmpty() && find(it) == null && lookedUp.add(it) }
+        if (missing.isEmpty()) return
+        scope.launch {
+            for (id in missing) {
+                runCatching { aiTts.fetchFishVoice(id) }
+                    .onSuccess { v -> if (v != null) remember(v) }
+                    .onFailure { GlassLog.b("Tts") { "Fish 声音查询失败 $id: ${it.message}" } }
+            }
+        }
+    }
+
     /** 刷新「我的声音」。[force] 为 false 时 10 分钟内只拉一次。 */
     fun refreshMine(force: Boolean = false) {
         val now = System.currentTimeMillis()
@@ -169,6 +205,7 @@ class FishVoiceRepository @Inject constructor(
 
     private companion object {
         const val REFRESH_INTERVAL_MS = 10 * 60_000L
+        const val CREDIT_INTERVAL_MS = 30_000L
         const val COVER_PX = 64
         const val COVER_CDN = "https://public-platform.r2.fish.audio/"
     }

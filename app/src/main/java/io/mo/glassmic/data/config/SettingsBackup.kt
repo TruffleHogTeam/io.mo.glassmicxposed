@@ -91,6 +91,7 @@ class SettingsBackup @Inject constructor(
         .put("llm_endpoint", ai.llmEndpoint)
         .put("llm_api_key", ai.llmApiKey)
         .put("llm_model", ai.llmModel)
+        .apply { if (ai.hasLlmTemperature()) put("llm_temperature", ai.llmTemperature.toDouble()) }
 
     /** 只覆盖 JSON 里出现的字段，缺的保持 [into] 原值。 */
     private fun jsonToAi(o: JSONObject, into: TtsAiConfig.Builder): TtsAiConfig.Builder = into.apply {
@@ -115,6 +116,7 @@ class SettingsBackup @Inject constructor(
         if (o.has("llm_endpoint")) llmEndpoint = o.optString("llm_endpoint")
         if (o.has("llm_api_key")) llmApiKey = o.optString("llm_api_key")
         if (o.has("llm_model")) llmModel = o.optString("llm_model")
+        if (o.has("llm_temperature")) llmTemperature = o.optDouble("llm_temperature").toFloat()
     }
 
     private companion object {

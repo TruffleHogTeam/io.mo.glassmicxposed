@@ -266,13 +266,13 @@ class AiTtsSynthesizer @Inject constructor(
                 step(str(R.string.tts_step_already_processed))
                 FishAutoTag.keepFishTags(FishAutoTag.singleLine(input), model)
             }
-            // 文本已带标签：要么是处理过的结果被改了几个字，要么是用户手写的标签 → 直接合成。
-            // 别人发来的消息一般不带标签，自动回复不受影响
-            FishAutoTag.hasFishTags(input) -> {
+            // 照读模式下文本已带标签（用户手写或改过）→ 直接合成，省掉一次 LLM 往返
+            mode == FishTextMode.FISH_TEXT_READ && FishAutoTag.hasFishTags(input) -> {
                 step(str(R.string.tts_step_already_tagged))
                 FishAutoTag.keepFishTags(FishAutoTag.singleLine(input), model)
             }
-            else -> fishLlmPass(ai, input, mode, model)
+            // 润色 / 回复：先去掉原文里的标签（比如照读模式加过的），再交给 LLM 重新处理
+            else -> fishLlmPass(ai, FishAutoTag.plainText(input).ifBlank { input }, mode, model)
         }
         val body = JSONObject()
             .put("text", text)
@@ -384,7 +384,7 @@ class AiTtsSynthesizer @Inject constructor(
                         .put(JSONObject().put("role", "user").put("content", input))
                 )
                 // 加标签 / 润色要稳定少改写；回复需要一点变化，不然每次都一样
-                .put("temperature", if (reply) LLM_REPLY_TEMPERATURE else LLM_TEMPERATURE)
+                .put("temperature", llmTemperature(ai, reply))
                 .put("max_tokens", 800)
                 .put("stream", false)
                 .toString()
@@ -425,6 +425,33 @@ class AiTtsSynthesizer @Inject constructor(
     private suspend fun step(message: String) {
         currentCoroutineContext().ensureActive()
         progress.step(message)
+    }
+
+    /** 用户在悬浮窗快捷设置里调过温度就用它，否则按模式默认（加标签 / 润色 0.2，回复 0.7）。 */
+    private fun llmTemperature(ai: TtsAiConfig, reply: Boolean): Double =
+        if (ai.hasLlmTemperature()) ai.llmTemperature.toDouble().coerceIn(0.0, 1.5)
+        else if (reply) LLM_REPLY_TEMPERATURE else LLM_TEMPERATURE
+
+    /** 按 ID 查询单个 Fish 声音（名称与封面）。用于手填的音色 ID、收藏库里的声音等「我的声音」列表之外的情况。 */
+    suspend fun fetchFishVoice(id: String): FishVoice? = withContext(Dispatchers.IO) {
+        val ai = configStore.current().tts.ai
+        if (ai.apiKey.isBlank() || id.isBlank()) return@withContext null
+        val bytes = httpGet(
+            "${fishBase(ai)}/model/${URLEncoder.encode(id.trim(), "UTF-8")}",
+            mapOf("Authorization" to "Bearer ${ai.apiKey}")
+        )
+        val o = JSONObject(String(bytes, Charsets.UTF_8))
+        val vid = o.optString("_id").trim().ifEmpty { id.trim() }
+        val title = o.optString("title").replace(Regex("[,，\\s]+"), " ").trim()
+        FishVoice(vid, title.ifEmpty { vid }, o.optString("cover_image").trim())
+    }
+
+    /** Fish API 余额（GET /wallet/self/api-credit 的 credit 字段，原样返回字符串）。 */
+    suspend fun fetchFishCredit(): String? = withContext(Dispatchers.IO) {
+        val ai = configStore.current().tts.ai
+        if (ai.apiKey.isBlank()) return@withContext null
+        val bytes = httpGet("${fishBase(ai)}/wallet/self/api-credit", mapOf("Authorization" to "Bearer ${ai.apiKey}"))
+        JSONObject(String(bytes, Charsets.UTF_8)).optString("credit").takeIf { it.isNotBlank() }
     }
 
     private fun str(resId: Int, vararg args: Any): String = AppLocale.string(context, resId, *args)

@@ -60,6 +60,7 @@ class PlaybackController @Inject constructor(
     private val dao: AudioDao,
     private val ttsFactory: TtsSynthesizerFactory,
     private val ttsProgress: TtsProgress,
+    private val importRepo: AudioImportRepository,
     @ApplicationContext private val context: Context
 ) : MemoryReleasable {
 
@@ -104,6 +105,9 @@ class PlaybackController @Inject constructor(
     private var previewTrack: AudioTrack? = null
 
     @Volatile private var generatedTtsPcm: ByteArray? = null
+    /** 最近一次生成用的文本（存入音频库时用来命名）。 */
+    @Volatile var lastGeneratedText: String = ""
+        private set
 
     /**
      * 在本机扬声器/耳机试听上次生成的语音（不占用虚拟麦克风推流管线）。
@@ -207,6 +211,7 @@ class PlaybackController @Inject constructor(
         }
         if (pcm != null && pcm.isNotEmpty()) {
             generatedTtsPcm = pcm
+            lastGeneratedText = trimmed
             _ttsGen.value = TtsGen.READY
             GlassLog.b("Playback") { "TTS 已生成: ${trimmed.take(20)} (${pcm.size} B)" }
             true
@@ -215,6 +220,18 @@ class PlaybackController @Inject constructor(
             GlassLog.b("Playback") { "TTS 生成失败/超时: ${trimmed.take(20)}" }
             false
         }
+    }
+
+    /**
+     * 把最近一次生成的语音存进音频库。[groupId] 为空或分组已不存在时新建一个「TTS」分组。
+     * 返回存入的分组 ID，没有可存的语音时返回 null。
+     */
+    suspend fun saveGeneratedTts(groupId: String?, name: String): String? = withContext(Dispatchers.IO) {
+        val pcm = generatedTtsPcm ?: return@withContext null
+        val gid = groupId?.takeIf { dao.findGroup(it) != null }
+            ?: importRepo.createGroup("TTS", "🗣️", null).id
+        importRepo.importPcm(pcm, MASTER_SAMPLE_RATE, MASTER_CHANNELS, gid, name.take(40))
+        gid
     }
 
     private val _ttsDelayRemainingMs = MutableStateFlow(0L)
