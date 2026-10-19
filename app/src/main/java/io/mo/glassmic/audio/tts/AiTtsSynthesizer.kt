@@ -397,7 +397,7 @@ class AiTtsSynthesizer @Inject constructor(
                 .optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
                 ?.optString("content").orEmpty().trim().trim('"')
             val cleaned = FishAutoTag.stripUnspeakable(FishAutoTag.singleLine(content))
-            val out = if (ai.fishAutoTag) FishAutoTag.keepFishTags(cleaned, model) else FishAutoTag.plainText(cleaned)
+            val out = if (ai.fishAutoTag) FishAutoTag.dropTrailingTags(FishAutoTag.keepFishTags(cleaned, model)) else FishAutoTag.plainText(cleaned)
             if (FishAutoTag.hasSpeakableText(out)) {
                 step(str(R.string.tts_step_llm_done, seconds(t0)))
                 lastLlmOutput = out
